@@ -31,10 +31,12 @@ cp .env.example .env
 ```
 noticehub/
 ├── src/              # Source code
-│   ├── core/         # Core business logic
-│   ├── data/         # Database models and operations
-│   ├── email/        # Email processing
-│   └── llm/          # LLM integration
+│   ├── data/          # Database models and operations
+│   ├── email/         # Email processing
+│   ├── llm/           # LLM integration
+│   ├── notifications/ # Notification helpers
+│   └── utils/         # Utilities
+├── scripts/          # Helper scripts and Streamlit UI
 ├── tests/            # Test files
 ├── .env              # Environment variables
 ├── .env.example      # Example environment file
@@ -56,6 +58,12 @@ The project follows a structured development approach with multiple work package
 8. WP8: Testing, Error Handling & Validation
 9. WP9: Project Documentation & Final Report
 
-## License
+## Running Tests
 
-MIT License
+Install dependencies and copy the example environment file:
+
+```bash
+pip install -r requirements.txt
+cp .env.example .env
+pytest
+```

@@ -151,6 +151,22 @@ class Dependency(Base):
     def __repr__(self):
         return f"<Dependency(internal_system_id={self.internal_system_id}, external_service_id={self.external_service_id})>"
 
+class NotificationImpact(Base):
+    __tablename__ = "notification_impacts"
+    id = Column(Integer, primary_key=True, index=True)
+    notification_id = Column(Integer, ForeignKey('notifications.id'), nullable=False)
+    internal_system_id = Column(Integer, ForeignKey('internal_systems.id'), nullable=False)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    notification = relationship("Notification")
+    internal_system = relationship("InternalSystem")
+
+    __table_args__ = (UniqueConstraint('notification_id', 'internal_system_id', name='_notification_internal_uc'),)
+
+    def __repr__(self):
+        return f"<NotificationImpact(notification_id={self.notification_id}, internal_system_id={self.internal_system_id})>"
+
 # --- Database Setup --- #
 engine = None
 SessionLocal = None
@@ -203,7 +219,15 @@ if __name__ == '__main__':
         inspector = inspect(engine)
         table_names = inspector.get_table_names()
         logger.info(f"Tables present in the database: {table_names}")
-        expected_tables = {'raw_emails', 'llm_data', 'notifications', 'external_services', 'internal_systems', 'dependencies'}
+        expected_tables = {
+            'raw_emails',
+            'llm_data',
+            'notifications',
+            'external_services',
+            'internal_systems',
+            'dependencies',
+            'notification_impacts',
+        }
         if expected_tables.issubset(set(table_names)):
             logger.info("All expected tables seem to be created.")
         else:

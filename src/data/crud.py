@@ -3,9 +3,17 @@ from typing import List, Optional # Ensure List and Optional are imported
 
 from src.utils.logger import logger # Ensure logger is imported
 from .models import (
-    Notification, RawEmail, LLMData,
-    NotificationStatusEnum, ProcessingStatusEnum, NotificationTypeEnum, SeverityEnum,
-    ExternalService, InternalSystem, Dependency  # Ensure these are imported
+    Notification,
+    RawEmail,
+    LLMData,
+    NotificationStatusEnum,
+    ProcessingStatusEnum,
+    NotificationTypeEnum,
+    SeverityEnum,
+    ExternalService,
+    InternalSystem,
+    Dependency,
+    NotificationImpact,
 )
 from typing import Type, TypeVar, Any # Retaining these just in case, though List and Optional are primary
 from datetime import datetime, timezone
@@ -610,6 +618,40 @@ def delete_dependency(db: Session, dependency_id: int) -> bool:
         db.rollback()
         logger.error(f"Error deleting dependency ID {dependency_id}: {e}", exc_info=True)
         return False
+
+
+# --- Notification Impact Analysis ---
+def create_notification_impact(db: Session, notification_id: int, internal_system_id: int) -> Optional[NotificationImpact]:
+    existing = (
+        db.query(NotificationImpact)
+        .filter_by(notification_id=notification_id, internal_system_id=internal_system_id)
+        .first()
+    )
+    if existing:
+        return existing
+    impact = NotificationImpact(notification_id=notification_id, internal_system_id=internal_system_id)
+    db.add(impact)
+    db.commit()
+    db.refresh(impact)
+    return impact
+
+
+def analyze_notification_impacts(db: Session, notification_id: int, service_name: Optional[str]) -> List[NotificationImpact]:
+    if not service_name:
+        return []
+    service = get_external_service_by_name(db, service_name)
+    if not service:
+        return []
+    deps = get_dependencies_for_external_service(db, service.id)
+    impacts: List[NotificationImpact] = []
+    for dep in deps:
+        impact = create_notification_impact(db, notification_id, dep.internal_system_id)
+        impact.internal_system = dep.internal_system
+        impacts.append(impact)
+    return impacts
+
+    
+    # This try/except block belongs to delete_dependency
 
 
 

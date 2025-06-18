@@ -18,6 +18,7 @@ from src.email.parser import pre_filter_email, clean_email_body
 from src.data.schemas import ExternalServiceCreate, ExternalServiceUpdate, ExternalServiceSchema, ExternalServiceList, InternalSystemCreate, InternalSystemUpdate, InternalSystemSchema, InternalSystemList, DependencyCreate, DependencyUpdate, DependencySchema, DependencyList
 from src.llm.llm_factory import LLMFactory
 from src.data import crud
+from src.notifications.notifier import send_email_notification
 from dateutil import parser as date_parser
 
 logger.info("Initializing NoticeHub...")
@@ -572,6 +573,20 @@ def main_email_processing_workflow():
                         raw_llm_response=raw_llm_response_str,
                         processing_status=ProcessingStatusEnum.COMPLETED # Or PENDING_VALIDATION if needed
                     )
+
+                    impacts = crud.analyze_notification_impacts(
+                        db_session_local, notification_record.id, extracted_service_name
+                    )
+                    for imp in impacts:
+                        logger.info(
+                            f"Notification {notification_record.id} impacts internal system {imp.internal_system_id}"
+                        )
+                        if getattr(imp, "internal_system", None) and imp.internal_system.responsible_contact:
+                            send_email_notification(
+                                imp.internal_system.responsible_contact,
+                                f"Service issue: {extracted_service_name}",
+                                event_summary_str or "Service notification",
+                            )
                 else:
                     err_msg = f"LLM error: {llm_response_dict.get('error', 'Unknown LLM error')}"
                     logger.error(f"LLM analysis failed for LLMData ID {notification_record.llm_data.id}. {err_msg}")
