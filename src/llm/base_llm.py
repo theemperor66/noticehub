@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional
 
+
 class BaseLLM(ABC):
     """Abstract base class for Large Language Model clients."""
 
@@ -9,7 +10,9 @@ class BaseLLM(ABC):
         self.model_name = model_name
 
     @abstractmethod
-    def generate_text(self, prompt: str, max_tokens: int = 1500, temperature: float = 0.7, **kwargs) -> str:
+    def generate_text(
+        self, prompt: str, max_tokens: int = 1500, temperature: float = 0.7, **kwargs
+    ) -> str:
         """Generate text based on a given prompt."""
         pass
 
@@ -23,7 +26,9 @@ class BaseLLM(ABC):
         try:
             return template.format(**kwargs)
         except KeyError as e:
-            raise ValueError(f"Missing key in prompt template: {e}. Provided kwargs: {kwargs.keys()}")
+            raise ValueError(
+                f"Missing key in prompt template: {e}. Provided kwargs: {kwargs.keys()}"
+            )
 
     def get_provider_name(self) -> str:
         """Returns the name of the LLM provider (e.g., 'openai', 'google')."""

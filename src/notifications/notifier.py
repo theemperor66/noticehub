@@ -6,7 +6,9 @@ from src.config import settings
 
 
 def send_email_notification(to_address: str, subject: str, body: str) -> bool:
-    if not (settings.email_server and settings.email_username and settings.email_password):
+    if not (
+        settings.email_server and settings.email_username and settings.email_password
+    ):
         logger.warning("SMTP credentials missing; email not sent")
         return False
 
