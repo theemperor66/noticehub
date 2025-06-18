@@ -1,0 +1,50 @@
+# Git
+.git
+.gitignore
+
+# Python virtual environment
+.venv
+venv/
+ENV/
+
+# Python bytecode and caches
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# IDE and editor specific
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS specific
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Docker files (if they are not meant to be in the image itself, though Dockerfile is usually at root)
+# Dockerfile
+# docker-compose.yml
+
+# Test reports and coverage
+htmlcov/
+.coverage
+.pytest_cache/
+
+# Local instance data
+*.db
+*.sqlite3
+
+# Secrets / Local Environment config
+.env
+*.env
+
+# Logs
+*.log
+logs/
