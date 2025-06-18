@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     db_echo_log: bool = Field(False, validation_alias="DB_ECHO_LOG")
     api_port: int = Field(5001, validation_alias="API_PORT")
     debug_mode: bool = Field(False, validation_alias="DEBUG_MODE")
+    demo_mode: bool = Field(False, validation_alias="DEMO_MODE")
     email_check_interval_seconds: int = Field(60, validation_alias="EMAIL_CHECK_INTERVAL_SECONDS")
 
     # Email Filtering Configuration

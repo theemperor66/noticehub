@@ -1,0 +1,26 @@
+[
+  {
+    "title": "Cloud Service Maintenance",
+    "status": "new",
+    "created_at": "2024-05-10T08:00:00Z",
+    "llm_data": {
+      "extracted_service_name": "Cloud DB",
+      "notification_type": "maintenance",
+      "severity": "low",
+      "llm_summary": "Scheduled maintenance on Cloud DB starting May 10 at 08:00 UTC.",
+      "processing_status": "completed"
+    }
+  },
+  {
+    "title": "API Outage Resolved",
+    "status": "resolved",
+    "created_at": "2024-05-12T10:30:00Z",
+    "llm_data": {
+      "extracted_service_name": "Public API",
+      "notification_type": "outage",
+      "severity": "high",
+      "llm_summary": "The earlier outage affecting the Public API has been resolved.",
+      "processing_status": "completed"
+    }
+  }
+]

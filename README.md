@@ -67,3 +67,14 @@ pip install -r requirements.txt
 cp .env.example .env
 pytest
 ```
+
+## Demo Mode
+
+The Streamlit dashboard can run in a self-contained demo mode. Set `DEMO_MODE=true`
+in your environment before launching the UI to start with demo data by default.
+You can toggle demo mode on or off from the sidebar while the app is running.
+
+```bash
+export DEMO_MODE=true
+streamlit run scripts/streamlit_app.py
+```
