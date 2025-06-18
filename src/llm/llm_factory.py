@@ -1,6 +1,7 @@
 from src.llm.base_llm import BaseLLM
 from src.llm.openai_llm import OpenAILLM
-from src.llm.gemini_llm import GeminiLLM # Assuming you might add this
+from src.llm.gemini_llm import GeminiLLM  # Assuming you might add this
+from src.llm.groq_llm import GroqLLM
 from src.config import settings
 from src.utils.logger import logger
 
@@ -41,13 +42,19 @@ class LLMFactory:
                  logger.error(f"ValueError for GeminiLLM: {e}. Check API key and model name.")
                  raise
 
+        elif provider == "groq":
+            return GroqLLM(
+                api_key=api_key or settings.groq_api_key,
+                model_name=model_name or settings.llm_model
+            )
+
         # Add other providers here as elif blocks
         # elif provider == "anthropic":
         #     return AnthropicLLM(api_key=api_key or settings.anthropic_api_key, model_name=model_name or settings.llm_model)
         
         else:
             logger.error(f"Unsupported LLM provider: {provider}")
-            raise ValueError(f"Unsupported LLM provider: {provider}. Supported: 'openai', 'google'/'gemini'.")
+            raise ValueError(f"Unsupported LLM provider: {provider}. Supported: 'openai', 'google'/'gemini', 'groq'.")
 
 # Example Usage (for testing purposes)
 if __name__ == '__main__':

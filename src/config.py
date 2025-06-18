@@ -19,13 +19,14 @@ class Settings(BaseSettings):
     # LLM settings
     llm_provider: str = "openai"
     openai_api_key: str
-    google_api_key: str | None = None # Optional, can be None if not set
+    google_api_key: str | None = None  # Optional, can be None if not set
+    groq_api_key: str | None = None  # Optional Groq API key
     llm_model: str = "gpt-3.5-turbo"
 
     # Database settings
     database_url: str # This must be provided in .env
     db_echo_log: bool = Field(False, validation_alias="DB_ECHO_LOG")
-    api_port: int = Field(5000, validation_alias="API_PORT")
+    api_port: int = Field(5001, validation_alias="API_PORT")
     debug_mode: bool = Field(False, validation_alias="DEBUG_MODE")
     email_check_interval_seconds: int = Field(60, validation_alias="EMAIL_CHECK_INTERVAL_SECONDS")
 

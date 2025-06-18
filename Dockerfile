@@ -20,9 +20,10 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the rest of the application's code into the container at /app
-# We'll copy main.py and the src directory
+# We'll copy main.py, the src directory, and the scripts directory for the Streamlit UI
 COPY main.py .
 COPY src/ ./src/
+COPY scripts/ ./scripts/
 
 # Make port 80 available to the world outside this container (if your app were a web server)
 # EXPOSE 80 

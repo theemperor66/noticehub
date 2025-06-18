@@ -24,7 +24,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    command: streamlit run scripts/streamlit_app.py --server.port 8501
+    working_dir: /app
+    command: streamlit run /app/scripts/streamlit_app.py --server.port 8501
     container_name: noticehub_ui
     ports:
       - "8501:8501"

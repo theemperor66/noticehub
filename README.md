@@ -24,7 +24,7 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-4. Add your API keys and credentials to the `.env` file
+4. Add your API keys and credentials to the `.env` file. Supported LLM providers are **openai**, **google/gemini**, and **groq**.
 
 ## Project Structure
 

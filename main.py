@@ -630,8 +630,8 @@ if __name__ == "__main__":
         email_thread = threading.Thread(target=run_email_processor_periodically, daemon=True)
         email_thread.start()
 
-        logger.info(f"Starting Flask API server on port {config.settings.api_port}...")
-        app.run(host='0.0.0.0', port=config.settings.api_port, debug=config.settings.debug_mode)
+        logger.info(f"Starting Flask API server on port 5001...")
+        app.run(host='0.0.0.0', port=5001, debug=config.settings.debug_mode)
 
     except Exception as e:
         logger.critical(f"Application failed to start: {e}", exc_info=True)
