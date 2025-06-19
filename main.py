@@ -1,47 +1,52 @@
 import json
-from typing import Optional, Any, List, Dict
+import os
+import sys
 import threading
 import time
 from datetime import datetime
+from typing import Any, Dict, List, Optional
 
-from flask import Flask, jsonify, request, g
+from dateutil import parser as date_parser
+from flask import Flask, g, jsonify, request
 from sqlalchemy.orm import Session, joinedload
 
 from src import config
-from src.utils.logger import logger
+from src.data import crud
 from src.data.models import (
+    Dependency,
+    ExternalService,
+    InternalSystem,
+    LLMData,
+    Notification,
+    NotificationTypeEnum,
+    ProcessingStatusEnum,
+    RawEmail,
+    SeverityEnum,
     create_tables,
     get_db_session,
-    Notification,
-    RawEmail,
-    LLMData,
-    ProcessingStatusEnum,
-    NotificationTypeEnum,
-    SeverityEnum,
-    Dependency,
-    InternalSystem,
-    ExternalService,
+)
+from src.data.schemas import (
+    DependencyCreate,
+    DependencyList,
+    DependencySchema,
+    DependencyUpdate,
+    ExternalServiceCreate,
+    ExternalServiceList,
+    ExternalServiceSchema,
+    ExternalServiceUpdate,
+    InternalSystemCreate,
+    InternalSystemList,
+    InternalSystemSchema,
+    InternalSystemUpdate,
 )
 from src.email.client import EmailClient
-from src.email.parser import pre_filter_email, clean_email_body
-from src.data.schemas import (
-    ExternalServiceCreate,
-    ExternalServiceUpdate,
-    ExternalServiceSchema,
-    ExternalServiceList,
-    InternalSystemCreate,
-    InternalSystemUpdate,
-    InternalSystemSchema,
-    InternalSystemList,
-    DependencyCreate,
-    DependencyUpdate,
-    DependencySchema,
-    DependencyList,
-)
+from src.email.parser import clean_email_body, pre_filter_email
 from src.llm.llm_factory import LLMFactory
-from src.data import crud
 from src.notifications.notifier import send_email_notification
-from dateutil import parser as date_parser
+from src.utils.logger import logger
+
+sys.path.append(os.path.join(os.path.dirname(__file__), "scripts"))
+import env_utils
 
 logger.info("Initializing NoticeHub...")
 
@@ -154,12 +159,14 @@ def serialize_notification(notification: Notification) -> Dict[str, Any]:
         "created_at": serialize_datetime(notification.created_at),
         "updated_at": serialize_datetime(notification.updated_at),
         "last_checked_at": serialize_datetime(notification.last_checked_at),
-        "raw_email_data": serialize_raw_email(notification.raw_email_data)
-        if notification.raw_email_data
-        else None,  # Eager load if needed often
-        "llm_data": serialize_llm_data(notification.llm_data)
-        if notification.llm_data
-        else None,  # Eager load if needed often
+        "raw_email_data": (
+            serialize_raw_email(notification.raw_email_data)
+            if notification.raw_email_data
+            else None
+        ),  # Eager load if needed often
+        "llm_data": (
+            serialize_llm_data(notification.llm_data) if notification.llm_data else None
+        ),  # Eager load if needed often
         # Relationships (example, assuming they exist on Notification model)
         # "affected_services": [service.name for service in notification.affected_services],
         # "dependencies": [dep.name for dep in notification.dependencies],
@@ -227,9 +234,12 @@ def api_create_external_service():
             f"Error validating external service creation data: {e}", exc_info=True
         )
         # Pydantic v2 errors can be complex; str(e) gives a good summary.
-        return jsonify(
-            {"error": "Invalid input for external service.", "details": str(e)}
-        ), 400
+        return (
+            jsonify(
+                {"error": "Invalid input for external service.", "details": str(e)}
+            ),
+            400,
+        )
 
     db_service = crud.create_external_service(
         db=g.db,
@@ -270,9 +280,10 @@ def api_get_external_services():
 def api_get_external_service(service_id: int):
     db_service = crud.get_external_service(db=g.db, service_id=service_id)
     if db_service is None:
-        return jsonify(
-            {"error": f"External service with ID {service_id} not found"}
-        ), 404
+        return (
+            jsonify({"error": f"External service with ID {service_id} not found"}),
+            404,
+        )
     return jsonify(ExternalServiceSchema.model_validate(db_service).model_dump())
 
 
@@ -287,17 +298,24 @@ def api_update_external_service(service_id: int):
             f"Error validating external service update data for ID {service_id}: {e}",
             exc_info=True,
         )
-        return jsonify(
-            {"error": "Invalid input for external service update.", "details": str(e)}
-        ), 400
+        return (
+            jsonify(
+                {
+                    "error": "Invalid input for external service update.",
+                    "details": str(e),
+                }
+            ),
+            400,
+        )
 
     # Filter out fields that were not provided in the request (Pydantic models default None)
     update_args = {k: v for k, v in update_data.model_dump().items() if v is not None}
 
     if not update_args:
-        return jsonify(
-            {"message": "No update data provided."}
-        ), 200  # Or 400 if an update must contain data
+        return (
+            jsonify({"message": "No update data provided."}),
+            200,
+        )  # Or 400 if an update must contain data
 
     updated_service = crud.update_external_service(
         db=g.db, service_id=service_id, **update_args
@@ -309,15 +327,19 @@ def api_update_external_service(service_id: int):
         # For now, assume 404 if None, or it could be a 409 if name conflict was the reason
         # Let's check if the service still exists to differentiate 404 from potential 409 (name conflict)
         if not crud.get_external_service(db=g.db, service_id=service_id):
-            return jsonify(
-                {"error": f"External service with ID {service_id} not found."}
-            ), 404
+            return (
+                jsonify({"error": f"External service with ID {service_id} not found."}),
+                404,
+            )
         else:  # Service exists, so update failed for another reason (e.g. name conflict)
-            return jsonify(
-                {
-                    "error": f"Failed to update external service ID {service_id}. Possible name conflict or other validation error."
-                }
-            ), 409
+            return (
+                jsonify(
+                    {
+                        "error": f"Failed to update external service ID {service_id}. Possible name conflict or other validation error."
+                    }
+                ),
+                409,
+            )
 
     return jsonify(ExternalServiceSchema.model_validate(updated_service).model_dump())
 
@@ -330,21 +352,30 @@ def api_delete_external_service(service_id: int):
         # To differentiate: check if service exists. If not, it's a 404. If it exists, it had dependencies (409 Conflict).
         db_service = crud.get_external_service(db=g.db, service_id=service_id)
         if db_service is None:
-            return jsonify(
-                {
-                    "error": f"External service with ID {service_id} not found for deletion."
-                }
-            ), 404
+            return (
+                jsonify(
+                    {
+                        "error": f"External service with ID {service_id} not found for deletion."
+                    }
+                ),
+                404,
+            )
         else:
             # If it exists but deletion failed, it's because of dependencies
-            return jsonify(
-                {
-                    "error": f"Cannot delete external service ID {service_id}. It may have active dependencies."
-                }
-            ), 409
-    return jsonify(
-        {"message": f"External service with ID {service_id} deleted successfully."}
-    ), 200
+            return (
+                jsonify(
+                    {
+                        "error": f"Cannot delete external service ID {service_id}. It may have active dependencies."
+                    }
+                ),
+                409,
+            )
+    return (
+        jsonify(
+            {"message": f"External service with ID {service_id} deleted successfully."}
+        ),
+        200,
+    )
 
 
 # --- InternalSystem API Endpoints ---
@@ -360,9 +391,10 @@ def api_create_internal_system():
         logger.error(
             f"Error validating internal system creation data: {e}", exc_info=True
         )
-        return jsonify(
-            {"error": "Invalid input for internal system.", "details": str(e)}
-        ), 400
+        return (
+            jsonify({"error": "Invalid input for internal system.", "details": str(e)}),
+            400,
+        )
 
     db_system = crud.create_internal_system(
         db=g.db,
@@ -407,9 +439,15 @@ def api_update_internal_system(system_id: int):
             f"Error validating internal system update data for ID {system_id}: {e}",
             exc_info=True,
         )
-        return jsonify(
-            {"error": "Invalid input for internal system update.", "details": str(e)}
-        ), 400
+        return (
+            jsonify(
+                {
+                    "error": "Invalid input for internal system update.",
+                    "details": str(e),
+                }
+            ),
+            400,
+        )
 
     update_args = {k: v for k, v in update_data.model_dump().items() if v is not None}
 
@@ -422,15 +460,19 @@ def api_update_internal_system(system_id: int):
 
     if updated_system is None:
         if not crud.get_internal_system(db=g.db, system_id=system_id):
-            return jsonify(
-                {"error": f"Internal system with ID {system_id} not found."}
-            ), 404
+            return (
+                jsonify({"error": f"Internal system with ID {system_id} not found."}),
+                404,
+            )
         else:
-            return jsonify(
-                {
-                    "error": f"Failed to update internal system ID {system_id}. Possible name conflict or other validation error."
-                }
-            ), 409
+            return (
+                jsonify(
+                    {
+                        "error": f"Failed to update internal system ID {system_id}. Possible name conflict or other validation error."
+                    }
+                ),
+                409,
+            )
 
     return jsonify(InternalSystemSchema.model_validate(updated_system).model_dump())
 
@@ -441,20 +483,29 @@ def api_delete_internal_system(system_id: int):
     if not success:
         db_system = crud.get_internal_system(db=g.db, system_id=system_id)
         if db_system is None:
-            return jsonify(
-                {
-                    "error": f"Internal system with ID {system_id} not found for deletion."
-                }
-            ), 404
+            return (
+                jsonify(
+                    {
+                        "error": f"Internal system with ID {system_id} not found for deletion."
+                    }
+                ),
+                404,
+            )
         else:
-            return jsonify(
-                {
-                    "error": f"Cannot delete internal system ID {system_id}. It may have active dependencies."
-                }
-            ), 409
-    return jsonify(
-        {"message": f"Internal system with ID {system_id} deleted successfully."}
-    ), 200
+            return (
+                jsonify(
+                    {
+                        "error": f"Cannot delete internal system ID {system_id}. It may have active dependencies."
+                    }
+                ),
+                409,
+            )
+    return (
+        jsonify(
+            {"message": f"Internal system with ID {system_id} deleted successfully."}
+        ),
+        200,
+    )
 
 
 # --- Dependency API Endpoints ---
@@ -468,25 +519,32 @@ def api_create_dependency():
         dep_data = DependencyCreate(**request.json)
     except Exception as e:
         logger.error(f"Error validating dependency creation data: {e}", exc_info=True)
-        return jsonify(
-            {"error": "Invalid input for dependency.", "details": str(e)}
-        ), 400
+        return (
+            jsonify({"error": "Invalid input for dependency.", "details": str(e)}),
+            400,
+        )
 
     # Check if parent InternalSystem exists
     if not crud.get_internal_system(db=g.db, system_id=dep_data.internal_system_id):
-        return jsonify(
-            {
-                "error": f"InternalSystem with ID {dep_data.internal_system_id} not found."
-            }
-        ), 404
+        return (
+            jsonify(
+                {
+                    "error": f"InternalSystem with ID {dep_data.internal_system_id} not found."
+                }
+            ),
+            404,
+        )
 
     # Check if parent ExternalService exists
     if not crud.get_external_service(db=g.db, service_id=dep_data.external_service_id):
-        return jsonify(
-            {
-                "error": f"ExternalService with ID {dep_data.external_service_id} not found."
-            }
-        ), 404
+        return (
+            jsonify(
+                {
+                    "error": f"ExternalService with ID {dep_data.external_service_id} not found."
+                }
+            ),
+            404,
+        )
 
     db_dependency = crud.create_dependency(
         db=g.db,
@@ -550,9 +608,12 @@ def api_update_dependency(dependency_id: int):
             f"Error validating dependency update data for ID {dependency_id}: {e}",
             exc_info=True,
         )
-        return jsonify(
-            {"error": "Invalid input for dependency update.", "details": str(e)}
-        ), 400
+        return (
+            jsonify(
+                {"error": "Invalid input for dependency update.", "details": str(e)}
+            ),
+            400,
+        )
 
     # update_dependency in CRUD currently only handles 'dependency_description'
     updated_dependency = crud.update_dependency(
@@ -573,14 +634,54 @@ def api_delete_dependency(dependency_id: int):
     success = crud.delete_dependency(db=g.db, dependency_id=dependency_id)
     if not success:
         # crud.delete_dependency returns False if not found.
-        return jsonify(
-            {
-                "error": f"Dependency with ID {dependency_id} not found or could not be deleted."
-            }
-        ), 404
-    return jsonify(
-        {"message": f"Dependency with ID {dependency_id} deleted successfully."}
-    ), 200
+        return (
+            jsonify(
+                {
+                    "error": f"Dependency with ID {dependency_id} not found or could not be deleted."
+                }
+            ),
+            404,
+        )
+    return (
+        jsonify(
+            {"message": f"Dependency with ID {dependency_id} deleted successfully."}
+        ),
+        200,
+    )
+
+
+# --- Email Configuration API Endpoints ---
+
+
+@app.route("/api/v1/email-config", methods=["GET"])
+def api_get_email_config():
+    cfg = env_utils.load_env()
+    keys = [
+        "EMAIL_SERVER",
+        "EMAIL_PORT",
+        "EMAIL_USERNAME",
+        "EMAIL_PASSWORD",
+        "EMAIL_FOLDER",
+        "EMAIL_CHECK_INTERVAL_SECONDS",
+    ]
+    return jsonify({k: cfg.get(k, "") for k in keys})
+
+
+@app.route("/api/v1/email-config", methods=["POST"])
+def api_update_email_config_endpoint():
+    if not request.is_json:
+        return jsonify({"error": "Request must be JSON"}), 415
+    data = request.json or {}
+    update_values = {
+        "EMAIL_SERVER": data.get("EMAIL_SERVER"),
+        "EMAIL_PORT": data.get("EMAIL_PORT"),
+        "EMAIL_USERNAME": data.get("EMAIL_USERNAME"),
+        "EMAIL_PASSWORD": data.get("EMAIL_PASSWORD"),
+        "EMAIL_FOLDER": data.get("EMAIL_FOLDER"),
+        "EMAIL_CHECK_INTERVAL_SECONDS": data.get("EMAIL_CHECK_INTERVAL_SECONDS"),
+    }
+    env_utils.update_env({k: v for k, v in update_values.items() if v is not None})
+    return jsonify({"message": "Configuration updated"})
 
 
 # --- Parsing Helpers (from original file, slightly adapted) ---

@@ -1,26 +1,91 @@
-[
-  {
-    "title": "Cloud Service Maintenance",
-    "status": "new",
-    "created_at": "2024-05-10T08:00:00Z",
-    "llm_data": {
-      "extracted_service_name": "Cloud DB",
-      "notification_type": "maintenance",
-      "severity": "low",
-      "llm_summary": "Scheduled maintenance on Cloud DB starting May 10 at 08:00 UTC.",
-      "processing_status": "completed"
+{
+    "notifications": [
+        {
+            "title": "Cloud Service Maintenance",
+            "status": "new",
+            "created_at": "2024-05-10T08:00:00Z",
+            "llm_data": {
+                "extracted_service_name": "Cloud DB",
+                "notification_type": "maintenance",
+                "severity": "low",
+                "llm_summary": "Scheduled maintenance on Cloud DB starting May 10 at 08:00 UTC.",
+                "processing_status": "completed"
+            }
+        },
+        {
+            "title": "API Outage Resolved",
+            "status": "resolved",
+            "created_at": "2024-05-12T10:30:00Z",
+            "llm_data": {
+                "extracted_service_name": "Public API",
+                "notification_type": "outage",
+                "severity": "high",
+                "llm_summary": "The earlier outage affecting the Public API has been resolved.",
+                "processing_status": "completed"
+            }
+        }
+    ],
+    "external_services": [
+        {
+            "id": 1,
+            "service_name": "AWS EC2 us-east-1",
+            "provider": "AWS",
+            "description": "AWS EC2 Compute in N. Virginia"
+        },
+        {
+            "id": 2,
+            "service_name": "AWS S3 Global",
+            "provider": "AWS",
+            "description": "AWS S3 Storage"
+        },
+        {
+            "id": 3,
+            "service_name": "Google Cloud Storage",
+            "provider": "Google Cloud",
+            "description": "GCP Object Storage"
+        }
+    ],
+    "internal_systems": [
+        {
+            "id": 1,
+            "system_name": "Core Application Server",
+            "responsible_contact": "app-dev-team@example.com",
+            "description": "Main backend application for core business logic."
+        },
+        {
+            "id": 2,
+            "system_name": "Data Processing Pipeline",
+            "responsible_contact": "data-eng-team@example.com",
+            "description": "ETL jobs for analytics and reporting."
+        }
+    ],
+    "dependencies": [
+        {
+            "id": 1,
+            "internal_system": {"id": 1, "system_name": "Core Application Server"},
+            "external_service": {"id": 1, "service_name": "AWS EC2 us-east-1"},
+            "dependency_description": "Primary compute hosting for application logic."
+        },
+        {
+            "id": 2,
+            "internal_system": {"id": 1, "system_name": "Core Application Server"},
+            "external_service": {"id": 2, "service_name": "AWS S3 Global"},
+            "dependency_description": "Stores user-generated content and static assets."
+        },
+        {
+            "id": 3,
+            "internal_system": {"id": 2, "system_name": "Data Processing Pipeline"},
+            "external_service": {"id": 3, "service_name": "Google Cloud Storage"},
+            "dependency_description": "Reads and writes data."
+        }
+    ],
+    "email_config": {
+        "EMAIL_SERVER": "imap.example.com",
+        "EMAIL_PORT": 993,
+        "EMAIL_USERNAME": "demo@example.com",
+        "EMAIL_PASSWORD": "password",
+        "EMAIL_FOLDER": "INBOX",
+        "EMAIL_CHECK_INTERVAL_SECONDS": 60
     }
-  },
-  {
-    "title": "API Outage Resolved",
-    "status": "resolved",
-    "created_at": "2024-05-12T10:30:00Z",
-    "llm_data": {
-      "extracted_service_name": "Public API",
-      "notification_type": "outage",
-      "severity": "high",
-      "llm_summary": "The earlier outage affecting the Public API has been resolved.",
-      "processing_status": "completed"
-    }
-  }
-]
+}
+

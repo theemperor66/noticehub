@@ -78,3 +78,10 @@ You can toggle demo mode on or off from the sidebar while the app is running.
 export DEMO_MODE=true
 streamlit run scripts/streamlit_app.py
 ```
+
+The demo dataset now includes sample external services, internal systems, and
+dependency mappings so that all dashboard sections work without a backend.
+Email settings are shown with placeholder values and are read-only in demo mode.
+
+An API endpoint `/api/v1/email-config` has been added for retrieving and
+updating email configuration when running against the real backend.
