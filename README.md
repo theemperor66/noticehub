@@ -79,9 +79,12 @@ export DEMO_MODE=true
 streamlit run scripts/streamlit_app.py
 ```
 
-The demo dataset now includes sample external services, internal systems, and
-dependency mappings so that all dashboard sections work without a backend.
-Email settings are shown with placeholder values and are read-only in demo mode.
+The demo dataset now includes multiple example notifications, external services,
+internal systems, and dependency mappings so that all dashboard sections work
+without a backend. The **Dashboard** page now displays a color‑coded status
+board for each service along with the impacted internal systems from the latest
+notifications. Email settings are shown with placeholder values and are
+read-only in demo mode.
 
 An API endpoint `/api/v1/email-config` has been added for retrieving and
 updating email configuration when running against the real backend.

@@ -44,16 +44,122 @@ def create_item(endpoint: str, payload: Dict[str, Any]):
 
 page = st.sidebar.radio(
     "Navigation",
-    ["Notifications", "Services", "Email Settings"],
+    ["Dashboard", "Notifications", "Services", "Email Settings"],
 )
 
-if page == "Notifications":
+if page == "Dashboard":
+    st.subheader("Service Impact Dashboard")
+    notifs = (
+        demo_data.get("notifications", [])
+        if demo_mode
+        else fetch_json("/api/v1/notifications")
+    )
+    services = (
+        demo_data.get("external_services", [])
+        if demo_mode
+        else fetch_json("/external-services")
+    )
+    systems = (
+        demo_data.get("internal_systems", [])
+        if demo_mode
+        else fetch_json("/internal-systems")
+    )
+    deps = (
+        demo_data.get("dependencies", []) if demo_mode else fetch_json("/dependencies")
+    )
+
+    status_colors = {
+        "none": "#2ecc71",  # green
+        "low": "#2ecc71",
+        "medium": "#f1c40f",  # yellow
+        "high": "#e74c3c",  # red
+    }
+
+    # Determine current status for each service
+    svc_status = []
+    for svc in services:
+        name = svc.get("service_name")
+        related = [
+            n
+            for n in notifs
+            if n.get("llm_data", {}).get("extracted_service_name") == name
+        ]
+        open_related = [n for n in related if n.get("status") != "resolved"]
+        if open_related:
+            latest = sorted(open_related, key=lambda x: x.get("created_at", ""), reverse=True)[0]
+            sev = latest.get("llm_data", {}).get("severity", "low")
+            status = latest.get("status", "new")
+        else:
+            sev = "none"
+            status = "operational"
+        svc_status.append({"service": name, "status": status, "severity": sev})
+    # Display service status cards
+    cols = st.columns(max(1, len(svc_status)))
+    for idx, info in enumerate(svc_status):
+        color = status_colors.get(info["severity"], "#2ecc71")
+        sev_text = f" ({info['severity']})" if info["severity"] != "none" else ""
+        html = (
+            f"<div style='padding:0.75rem;border-radius:4px;background-color:{color};color:white;text-align:center;'>"
+            f"<strong>{info['service']}</strong><br>{info['status'].title()}{sev_text}</div>"
+        )
+        cols[idx % len(cols)].markdown(html, unsafe_allow_html=True)
+
+    sys_map = {s["id"]: s["system_name"] for s in systems}
+    impact_rows = []
+    for n in notifs:
+        svc = n.get("llm_data", {}).get("extracted_service_name")
+        impacted = [
+            sys_map[d["internal_system"]["id"]]
+            for d in deps
+            if d.get("external_service", {}).get("service_name") == svc
+        ]
+        impact_rows.append(
+            {
+                "Service": svc,
+                "Notification": n.get("title"),
+                "Severity": n.get("llm_data", {}).get("severity"),
+                "Status": n.get("status"),
+                "Impacted Systems": ", ".join(impacted) if impacted else "None",
+            }
+        )
+    st.dataframe(impact_rows)
+
+
+elif page == "Notifications":
     st.subheader("Notifications")
-    if demo_mode:
-        st.dataframe(demo_data.get("notifications", []))
-    else:
-        data = fetch_json("/api/v1/notifications")
-        st.dataframe(data)
+    notifs = (
+        demo_data.get("notifications", [])
+        if demo_mode
+        else fetch_json("/api/v1/notifications")
+    )
+    deps = (
+        demo_data.get("dependencies", []) if demo_mode else fetch_json("/dependencies")
+    )
+    systems = (
+        demo_data.get("internal_systems", [])
+        if demo_mode
+        else fetch_json("/internal-systems")
+    )
+    sys_map = {s["id"]: s["system_name"] for s in systems}
+    rows = []
+    for n in notifs:
+        svc = n.get("llm_data", {}).get("extracted_service_name")
+        impacted = [
+            sys_map[d["internal_system"]["id"]]
+            for d in deps
+            if d.get("external_service", {}).get("service_name") == svc
+        ]
+        rows.append(
+            {
+                "title": n.get("title"),
+                "service": svc,
+                "severity": n.get("llm_data", {}).get("severity"),
+                "status": n.get("status"),
+                "impacted_systems": ", ".join(impacted) if impacted else "None",
+                "created_at": n.get("created_at"),
+            }
+        )
+    st.dataframe(rows)
 
 elif page == "Services":
     st.subheader("External Services")

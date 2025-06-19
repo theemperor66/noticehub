@@ -1,19 +1,19 @@
 {
     "notifications": [
         {
-            "title": "Cloud Service Maintenance",
+            "title": "Cloud DB Maintenance",
             "status": "new",
             "created_at": "2024-05-10T08:00:00Z",
             "llm_data": {
-                "extracted_service_name": "Cloud DB",
+                "extracted_service_name": "Cloud DB Cluster",
                 "notification_type": "maintenance",
-                "severity": "low",
-                "llm_summary": "Scheduled maintenance on Cloud DB starting May 10 at 08:00 UTC.",
+                "severity": "medium",
+                "llm_summary": "Scheduled maintenance on Cloud DB Cluster starting May 10 at 08:00 UTC.",
                 "processing_status": "completed"
             }
         },
         {
-            "title": "API Outage Resolved",
+            "title": "Public API Outage Resolved",
             "status": "resolved",
             "created_at": "2024-05-12T10:30:00Z",
             "llm_data": {
@@ -23,61 +23,68 @@
                 "llm_summary": "The earlier outage affecting the Public API has been resolved.",
                 "processing_status": "completed"
             }
+        },
+        {
+            "title": "S3 Latency Issues",
+            "status": "investigating",
+            "created_at": "2024-05-15T09:00:00Z",
+            "llm_data": {
+                "extracted_service_name": "AWS S3 Global",
+                "notification_type": "degradation",
+                "severity": "high",
+                "llm_summary": "Increased latency observed on AWS S3.",
+                "processing_status": "completed"
+            }
+        },
+        {
+            "title": "Messaging Service Degradation",
+            "status": "new",
+            "created_at": "2024-05-16T11:00:00Z",
+            "llm_data": {
+                "extracted_service_name": "Cloud Messaging",
+                "notification_type": "degradation",
+                "severity": "medium",
+                "llm_summary": "We are seeing delays in message delivery on Cloud Messaging.",
+                "processing_status": "completed"
+            }
+        },
+        {
+            "title": "EC2 us-east-1 Network Issue",
+            "status": "new",
+            "created_at": "2024-05-18T06:00:00Z",
+            "llm_data": {
+                "extracted_service_name": "AWS EC2 us-east-1",
+                "notification_type": "incident",
+                "severity": "high",
+                "llm_summary": "Networking issues affecting EC2 instances in us-east-1.",
+                "processing_status": "completed"
+            }
         }
     ],
     "external_services": [
-        {
-            "id": 1,
-            "service_name": "AWS EC2 us-east-1",
-            "provider": "AWS",
-            "description": "AWS EC2 Compute in N. Virginia"
-        },
-        {
-            "id": 2,
-            "service_name": "AWS S3 Global",
-            "provider": "AWS",
-            "description": "AWS S3 Storage"
-        },
-        {
-            "id": 3,
-            "service_name": "Google Cloud Storage",
-            "provider": "Google Cloud",
-            "description": "GCP Object Storage"
-        }
+        {"id": 1, "service_name": "AWS EC2 us-east-1", "provider": "AWS", "description": "AWS EC2 Compute in N. Virginia"},
+        {"id": 2, "service_name": "AWS S3 Global", "provider": "AWS", "description": "AWS S3 Storage"},
+        {"id": 3, "service_name": "Google Cloud Storage", "provider": "Google Cloud", "description": "GCP Object Storage"},
+        {"id": 4, "service_name": "Cloud DB Cluster", "provider": "Acme Cloud", "description": "Managed database service"},
+        {"id": 5, "service_name": "Public API", "provider": "Acme Cloud", "description": "Public API gateway"},
+        {"id": 6, "service_name": "Cloud Messaging", "provider": "Acme Cloud", "description": "Asynchronous messaging service"}
     ],
     "internal_systems": [
-        {
-            "id": 1,
-            "system_name": "Core Application Server",
-            "responsible_contact": "app-dev-team@example.com",
-            "description": "Main backend application for core business logic."
-        },
-        {
-            "id": 2,
-            "system_name": "Data Processing Pipeline",
-            "responsible_contact": "data-eng-team@example.com",
-            "description": "ETL jobs for analytics and reporting."
-        }
+        {"id": 1, "system_name": "Core Application Server", "responsible_contact": "app-dev-team@example.com", "description": "Main backend application for core business logic."},
+        {"id": 2, "system_name": "Data Processing Pipeline", "responsible_contact": "data-eng-team@example.com", "description": "ETL jobs for analytics and reporting."},
+        {"id": 3, "system_name": "Customer Portal", "responsible_contact": "frontend-team@example.com", "description": "User-facing customer portal."},
+        {"id": 4, "system_name": "Reporting Service", "responsible_contact": "analytics-team@example.com", "description": "Generates business reports."}
     ],
     "dependencies": [
-        {
-            "id": 1,
-            "internal_system": {"id": 1, "system_name": "Core Application Server"},
-            "external_service": {"id": 1, "service_name": "AWS EC2 us-east-1"},
-            "dependency_description": "Primary compute hosting for application logic."
-        },
-        {
-            "id": 2,
-            "internal_system": {"id": 1, "system_name": "Core Application Server"},
-            "external_service": {"id": 2, "service_name": "AWS S3 Global"},
-            "dependency_description": "Stores user-generated content and static assets."
-        },
-        {
-            "id": 3,
-            "internal_system": {"id": 2, "system_name": "Data Processing Pipeline"},
-            "external_service": {"id": 3, "service_name": "Google Cloud Storage"},
-            "dependency_description": "Reads and writes data."
-        }
+        {"id": 1, "internal_system": {"id": 1, "system_name": "Core Application Server"}, "external_service": {"id": 1, "service_name": "AWS EC2 us-east-1"}, "dependency_description": "Primary compute hosting for application logic."},
+        {"id": 2, "internal_system": {"id": 1, "system_name": "Core Application Server"}, "external_service": {"id": 2, "service_name": "AWS S3 Global"}, "dependency_description": "Stores user-generated content and static assets."},
+        {"id": 3, "internal_system": {"id": 2, "system_name": "Data Processing Pipeline"}, "external_service": {"id": 3, "service_name": "Google Cloud Storage"}, "dependency_description": "Reads and writes data."},
+        {"id": 4, "internal_system": {"id": 3, "system_name": "Customer Portal"}, "external_service": {"id": 4, "service_name": "Cloud DB Cluster"}, "dependency_description": "Backend database for customer data."},
+        {"id": 5, "internal_system": {"id": 3, "system_name": "Customer Portal"}, "external_service": {"id": 5, "service_name": "Public API"}, "dependency_description": "Third-party integrations."},
+        {"id": 6, "internal_system": {"id": 4, "system_name": "Reporting Service"}, "external_service": {"id": 4, "service_name": "Cloud DB Cluster"}, "dependency_description": "Reads aggregated metrics."},
+        {"id": 7, "internal_system": {"id": 4, "system_name": "Reporting Service"}, "external_service": {"id": 2, "service_name": "AWS S3 Global"}, "dependency_description": "Stores generated reports."},
+        {"id": 8, "internal_system": {"id": 4, "system_name": "Reporting Service"}, "external_service": {"id": 6, "service_name": "Cloud Messaging"}, "dependency_description": "Sends notifications."},
+        {"id": 9, "internal_system": {"id": 1, "system_name": "Core Application Server"}, "external_service": {"id": 5, "service_name": "Public API"}, "dependency_description": "Uses external APIs."}
     ],
     "email_config": {
         "EMAIL_SERVER": "imap.example.com",
@@ -88,4 +95,3 @@
         "EMAIL_CHECK_INTERVAL_SECONDS": 60
     }
 }
-
