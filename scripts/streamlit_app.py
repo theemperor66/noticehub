@@ -2,11 +2,11 @@ import json
 import os
 from typing import Any, Dict, List
 
-import pandas as pd
-
 import env_utils
+import pandas as pd
 import requests
 import streamlit as st
+import streamlit_shadcn_ui as ui
 
 API_BASE = os.getenv("API_BASE", "http://app:5001")
 DEFAULT_DEMO_MODE = os.getenv("DEMO_MODE", "false").lower() == "true"
@@ -61,7 +61,7 @@ page = st.sidebar.radio(
 )
 
 if page == "Dashboard":
-    st.subheader("Service Impact Dashboard")
+    st.subheader("External Providers Dashboard")
     if demo_mode:
         if "demo_notifications" not in st.session_state:
             st.session_state["demo_notifications"] = demo_data.get("notifications", [])
@@ -88,6 +88,12 @@ if page == "Dashboard":
         "medium": "status-yellow",  # yellow
         "high": "status-red",  # red
     }
+    variant_map = {
+        "none": "secondary",
+        "low": "secondary",
+        "medium": "outline",
+        "high": "destructive",
+    }
 
     # Determine current status for each service
     svc_status = []
@@ -100,7 +106,9 @@ if page == "Dashboard":
         ]
         open_related = [n for n in related if n.get("status") != "resolved"]
         if open_related:
-            latest = sorted(open_related, key=lambda x: x.get("created_at", ""), reverse=True)[0]
+            latest = sorted(
+                open_related, key=lambda x: x.get("created_at", ""), reverse=True
+            )[0]
             sev = latest.get("llm_data", {}).get("severity", "low")
             status = latest.get("status", "new")
         else:
@@ -116,7 +124,62 @@ if page == "Dashboard":
             f"<div class='status-card {cls}'>"
             f"<strong>{info['service']}</strong><br>{info['status'].title()}{sev_text}</div>"
         )
-        cols[idx % len(cols)].markdown(html, unsafe_allow_html=True)
+        with cols[idx % len(cols)]:
+            st.markdown(html, unsafe_allow_html=True)
+            ui.badges(
+                badge_list=[
+                    (info["severity"], variant_map.get(info["severity"], "secondary"))
+                ],
+                class_name="mt-1",
+                key=f"svc_badge_{idx}",
+            )
+
+    # Determine status for each internal system based on dependent services
+    severity_order = {"none": 0, "low": 1, "medium": 2, "high": 3}
+    svc_map = {s["service"]: s for s in svc_status}
+    sys_status = []
+    for sys in systems:
+        name = sys.get("system_name")
+        deps_for_sys = [
+            d.get("external_service", {}).get("service_name")
+            for d in deps
+            if d.get("internal_system", {}).get("id") == sys.get("id")
+        ]
+        relevant = [svc_map[s] for s in deps_for_sys if s in svc_map]
+        if relevant:
+            sev = max(relevant, key=lambda x: severity_order.get(x["severity"], 0))[
+                "severity"
+            ]
+            status = next(
+                (r["status"] for r in relevant if r["severity"] == sev), "operational"
+            )
+        else:
+            sev = "none"
+            status = "operational"
+        sys_status.append({"system": name, "status": status, "severity": sev})
+
+    if sys_status:
+        st.markdown("### Internal System Status")
+        sys_cols = st.columns(max(1, len(sys_status)))
+        for idx, info in enumerate(sys_status):
+            cls = status_classes.get(info["severity"], "status-green")
+            sev_text = f" ({info['severity']})" if info["severity"] != "none" else ""
+            html = (
+                f"<div class='status-card {cls}'>"
+                f"<strong>{info['system']}</strong><br>{info['status'].title()}{sev_text}</div>"
+            )
+            with sys_cols[idx % len(sys_cols)]:
+                st.markdown(html, unsafe_allow_html=True)
+                ui.badges(
+                    badge_list=[
+                        (
+                            info["severity"],
+                            variant_map.get(info["severity"], "secondary"),
+                        )
+                    ],
+                    class_name="mt-1",
+                    key=f"sys_badge_{idx}",
+                )
 
     # Add a bit of space before the table
     st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
@@ -150,7 +213,10 @@ if page == "Dashboard":
         key="impact_editor",
     )
 
-    deleted_ids = set(df["ID"]) - set(edited_df["ID"])
+    if "ID" in df.columns and "ID" in edited_df.columns:
+        deleted_ids = set(df["ID"]) - set(edited_df["ID"])
+    else:
+        deleted_ids = set()
     if deleted_ids:
         if demo_mode:
             st.session_state["demo_notifications"] = [
