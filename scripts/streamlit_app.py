@@ -2,6 +2,8 @@ import json
 import os
 from typing import Any, Dict, List
 
+import pandas as pd
+
 import env_utils
 import requests
 import streamlit as st
@@ -11,6 +13,17 @@ DEFAULT_DEMO_MODE = os.getenv("DEMO_MODE", "false").lower() == "true"
 
 st.set_page_config(page_title="NoticeHub Dashboard", layout="wide")
 st.title("NoticeHub Dashboard")
+
+# Inject reusable styles for status cards
+card_css = """
+<style>
+.status-card {padding:0.75rem;border-radius:4px;color:white;text-align:center;}
+.status-green {background-color:#2ecc71;}
+.status-yellow {background-color:#f1c40f;}
+.status-red {background-color:#e74c3c;}
+</style>
+"""
+st.markdown(card_css, unsafe_allow_html=True)
 
 demo_mode = st.sidebar.checkbox("Demo mode", value=DEFAULT_DEMO_MODE)
 demo_data = {}
@@ -49,11 +62,12 @@ page = st.sidebar.radio(
 
 if page == "Dashboard":
     st.subheader("Service Impact Dashboard")
-    notifs = (
-        demo_data.get("notifications", [])
-        if demo_mode
-        else fetch_json("/api/v1/notifications")
-    )
+    if demo_mode:
+        if "demo_notifications" not in st.session_state:
+            st.session_state["demo_notifications"] = demo_data.get("notifications", [])
+        notifs = st.session_state["demo_notifications"]
+    else:
+        notifs = fetch_json("/api/v1/notifications")
     services = (
         demo_data.get("external_services", [])
         if demo_mode
@@ -68,11 +82,11 @@ if page == "Dashboard":
         demo_data.get("dependencies", []) if demo_mode else fetch_json("/dependencies")
     )
 
-    status_colors = {
-        "none": "#2ecc71",  # green
-        "low": "#2ecc71",
-        "medium": "#f1c40f",  # yellow
-        "high": "#e74c3c",  # red
+    status_classes = {
+        "none": "status-green",  # green
+        "low": "status-green",
+        "medium": "status-yellow",  # yellow
+        "high": "status-red",  # red
     }
 
     # Determine current status for each service
@@ -96,17 +110,20 @@ if page == "Dashboard":
     # Display service status cards
     cols = st.columns(max(1, len(svc_status)))
     for idx, info in enumerate(svc_status):
-        color = status_colors.get(info["severity"], "#2ecc71")
+        cls = status_classes.get(info["severity"], "status-green")
         sev_text = f" ({info['severity']})" if info["severity"] != "none" else ""
         html = (
-            f"<div style='padding:0.75rem;border-radius:4px;background-color:{color};color:white;text-align:center;'>"
+            f"<div class='status-card {cls}'>"
             f"<strong>{info['service']}</strong><br>{info['status'].title()}{sev_text}</div>"
         )
         cols[idx % len(cols)].markdown(html, unsafe_allow_html=True)
 
+    # Add a bit of space before the table
+    st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
+
     sys_map = {s["id"]: s["system_name"] for s in systems}
     impact_rows = []
-    for n in notifs:
+    for idx, n in enumerate(notifs):
         svc = n.get("llm_data", {}).get("extracted_service_name")
         impacted = [
             sys_map[d["internal_system"]["id"]]
@@ -115,6 +132,7 @@ if page == "Dashboard":
         ]
         impact_rows.append(
             {
+                "ID": n.get("id", idx),
                 "Service": svc,
                 "Notification": n.get("title"),
                 "Severity": n.get("llm_data", {}).get("severity"),
@@ -122,16 +140,39 @@ if page == "Dashboard":
                 "Impacted Systems": ", ".join(impacted) if impacted else "None",
             }
         )
-    st.dataframe(impact_rows)
+
+    df = pd.DataFrame(impact_rows)
+    edited_df = st.data_editor(
+        df,
+        hide_index=True,
+        num_rows="dynamic",
+        use_container_width=True,
+        key="impact_editor",
+    )
+
+    deleted_ids = set(df["ID"]) - set(edited_df["ID"])
+    if deleted_ids:
+        if demo_mode:
+            st.session_state["demo_notifications"] = [
+                n for idx, n in enumerate(notifs) if n.get("id", idx) not in deleted_ids
+            ]
+        else:
+            for d_id in deleted_ids:
+                try:
+                    requests.delete(f"{API_BASE}/api/v1/notifications/{d_id}")
+                except Exception as e:
+                    st.error(f"Failed to delete notification {d_id}: {e}")
+        st.experimental_rerun()
 
 
 elif page == "Notifications":
     st.subheader("Notifications")
-    notifs = (
-        demo_data.get("notifications", [])
-        if demo_mode
-        else fetch_json("/api/v1/notifications")
-    )
+    if demo_mode:
+        if "demo_notifications" not in st.session_state:
+            st.session_state["demo_notifications"] = demo_data.get("notifications", [])
+        notifs = st.session_state["demo_notifications"]
+    else:
+        notifs = fetch_json("/api/v1/notifications")
     deps = (
         demo_data.get("dependencies", []) if demo_mode else fetch_json("/dependencies")
     )
