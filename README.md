@@ -70,12 +70,11 @@ pytest
 
 ## Sample Data
 
-The dashboard loads a demo dataset on startup that represents a
-fictional company using common cloud providers such as AWS, Azure,
-Google Cloud, GitHub and Cloudflare. If the backend API has no data
-yet, these examples are shown on their own. Once real notifications are
-created they are **merged** with the demo entries so the initial
-examples remain visible.
+On first start the application seeds the database with a demo dataset
+that represents a fictional company using common cloud providers such as
+AWS, Azure, Google Cloud, GitHub and Cloudflare. These entries are
+stored in the database like normal records and can be removed at any
+time. The UI no longer merges demo data with newly created entries.
 
 You can also process example HTML emails directly from the
 "Notifications" page. Selecting a demo email shows a small preview and

@@ -413,3 +413,22 @@ def test_get_pending_notifications(
             ProcessingStatusEnum.UNPROCESSED,
             ProcessingStatusEnum.PENDING_VALIDATION,
         ]
+
+
+def test_delete_notification(db_session: Session, basic_notification_from_email_factory):
+    notification = basic_notification_from_email_factory("_delete")
+    notif_id = notification.id
+
+    deleted = crud.delete_notification(db_session, notif_id)
+    assert deleted is True
+
+    fetched = crud.get_notification(db_session, notification_id=notif_id)
+    assert fetched is None
+
+    raw = db_session.query(RawEmail).filter(RawEmail.id == notification.raw_email_id).first()
+    assert raw is None
+
+
+def test_delete_notification_not_found(db_session: Session):
+    deleted = crud.delete_notification(db_session, 999999)
+    assert deleted is False

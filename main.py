@@ -7,6 +7,8 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+from src.llm.base_llm import BaseLLM
+
 from dateutil import parser as date_parser
 from flask import Flask, g, jsonify, request
 from sqlalchemy.orm import Session, joinedload
@@ -26,6 +28,7 @@ from src.data.models import (
     create_tables,
     get_db_session,
 )
+from src.data.seed_demo_data import seed_demo_data
 from src.data.schemas import (
     DependencyCreate,
     DependencyList,
@@ -69,20 +72,20 @@ SUBJECT_KEYWORDS = [
     "Resolved",
 ]
 
-# --- LLM Prompt Definition (Placeholder - should be more robust) ---
+# --- LLM Prompt Definition
 INITIAL_EXTRACTION_PROMPT_TEMPLATE = """
-Extract the following information from the email content provided below. 
-Return the information as a JSON object with these exact keys: 
+Extract the following information from the email content provided below.
+Return the information as a JSON object with these exact keys:
 'extracted_service_name', 'event_start_time', 'event_end_time', 'notification_type', 'event_summary', 'severity_level'.
 
 - 'extracted_service_name': The name of the service mentioned (e.g., "AWS EC2", "GitHub Actions").
 - 'event_start_time': The start date and time of the event (YYYY-MM-DD HH:MM UTC or ISO 8601). If not found, use null.
 - 'event_end_time': The end date and time of the event (YYYY-MM-DD HH:MM UTC or ISO 8601). If not found, use null.
-- 'notification_type': Classify the notification (e.g., "maintenance", "outage", "update", "alert", "info"). If unsure, use "unknown".
+- 'notification_type': One of ["maintenance", "outage", "update", "alert", "info", "security", "unknown"].
 - 'event_summary': A brief summary of the event or notification (1-2 sentences).
-- 'severity_level': The severity of the event (e.g., "low", "medium", "high", "critical"). If not found or unclear, use "unknown".
+- 'severity_level': One of ["low", "medium", "high", "critical", "info", "unknown"].
 
-Strictly provide only the JSON object in your response, without any explanatory text before or after it.
+Always include every key. Use null when a value is missing. Provide only JSON with no extra text.
 
 Email content:
 ---BEGIN EMAIL CONTENT---
@@ -219,6 +222,20 @@ def get_notification_detail(notification_id: int):
     if notification is None:
         return jsonify(error="Notification not found"), 404
     return jsonify(serialize_notification(notification))
+
+
+@app.route("/api/v1/notifications/<int:notification_id>", methods=["DELETE"])
+def delete_notification_api(notification_id: int):
+    success = crud.delete_notification(g.db, notification_id)
+    if not success:
+        return (
+            jsonify({"error": f"Notification with ID {notification_id} not found"}),
+            404,
+        )
+    return (
+        jsonify({"message": f"Notification {notification_id} deleted"}),
+        200,
+    )
 
 
 # --- ExternalService API Endpoints ---
@@ -735,7 +752,8 @@ def api_process_html_email():
 
     if llm_client and body_text:
         try:
-            llm_response = llm_client.analyze_text(
+            llm_response = analyze_with_retry(
+                llm_client,
                 text=body_text,
                 prompt_template=INITIAL_EXTRACTION_PROMPT_TEMPLATE,
                 email_subject=subject,
@@ -828,6 +846,70 @@ def parse_llm_notification_type(type_str: Optional[str]) -> NotificationTypeEnum
 def parse_llm_severity(severity_str: Optional[str]) -> SeverityEnum:
     if not severity_str or severity_str.strip() == "":
         return SeverityEnum.UNKNOWN
+
+
+def validate_llm_extraction_response(data: Dict[str, Any]) -> bool:
+    required_keys = {
+        "extracted_service_name",
+        "event_start_time",
+        "event_end_time",
+        "notification_type",
+        "event_summary",
+        "severity_level",
+    }
+    if not isinstance(data, dict):
+        return False
+    if not required_keys.issubset(data.keys()):
+        return False
+    allowed_types = {
+        "maintenance",
+        "outage",
+        "update",
+        "alert",
+        "info",
+        "security",
+        "unknown",
+        None,
+    }
+    allowed_severities = {
+        "low",
+        "medium",
+        "high",
+        "critical",
+        "info",
+        "unknown",
+        None,
+    }
+    nt = (data.get("notification_type") or "").lower() if data.get("notification_type") is not None else None
+    sev = (data.get("severity_level") or "").lower() if data.get("severity_level") is not None else None
+    if nt not in allowed_types:
+        return False
+    if sev not in allowed_severities:
+        return False
+    return True
+
+
+def analyze_with_retry(
+    llm_client: BaseLLM,
+    *,
+    text: str,
+    prompt_template: str,
+    max_attempts: int = 2,
+    **kwargs,
+) -> Dict[str, Any]:
+    response: Dict[str, Any] = {}
+    for attempt in range(max_attempts):
+        response = llm_client.analyze_text(
+            text=text,
+            prompt_template=prompt_template,
+            **kwargs,
+        )
+        if not response.get("error") and validate_llm_extraction_response(response):
+            return response
+        logger.warning(
+            f"LLM response validation failed on attempt {attempt + 1}: {response}"
+        )
+    return response
     processed_severity_str = severity_str.lower().strip()
     try:
         return SeverityEnum(processed_severity_str)
@@ -968,7 +1050,8 @@ def main_email_processing_workflow():
                 f"Sending content for Notification ID {notification_record.id} to LLM..."
             )
             try:
-                llm_response_dict = llm_client.analyze_text(
+                llm_response_dict = analyze_with_retry(
+                    llm_client,
                     text=content_to_analyze,
                     prompt_template=INITIAL_EXTRACTION_PROMPT_TEMPLATE,
                     email_subject=raw_email_data["subject"],
@@ -1084,6 +1167,11 @@ def initialize_database():
     try:
         create_tables()
         logger.info("Database tables checked/created successfully.")
+        db = get_db_session()
+        try:
+            seed_demo_data(db)
+        finally:
+            db.close()
     except Exception as e:
         logger.critical(f"Failed to initialize database: {e}", exc_info=True)
         raise

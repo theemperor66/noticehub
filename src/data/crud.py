@@ -307,6 +307,33 @@ def get_pending_notifications(
     )
 
 
+def delete_notification(db: Session, notification_id: int) -> bool:
+    """Deletes a notification and its related data."""
+    notification = (
+        db.query(Notification).filter(Notification.id == notification_id).first()
+    )
+    if not notification:
+        logger.warning(
+            f"Notification with ID {notification_id} not found for deletion."
+        )
+        return False
+    try:
+        db.query(NotificationImpact).filter(
+            NotificationImpact.notification_id == notification_id
+        ).delete()
+        db.delete(notification)
+        db.commit()
+        logger.info(f"Successfully deleted notification ID {notification_id}.")
+        return True
+    except Exception as e:
+        db.rollback()
+        logger.error(
+            f"Error deleting notification ID {notification_id}: {e}",
+            exc_info=True,
+        )
+        return False
+
+
 # --- ExternalService CRUD Operations ---
 
 

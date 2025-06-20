@@ -71,12 +71,8 @@ page = st.sidebar.radio(
 if page == "Dashboard":
     st.subheader("External Providers Dashboard")
     notifs = fetch_json("/api/v1/notifications")
-    if "demo_notifications" not in st.session_state:
-        st.session_state["demo_notifications"] = demo_data.get("notifications", [])
     if not notifs:
-        notifs = st.session_state["demo_notifications"]
-    else:
-        notifs = st.session_state["demo_notifications"] + notifs
+        notifs = demo_data.get("notifications", [])
 
     services = fetch_json("/external-services")
     if not services:
@@ -228,21 +224,20 @@ if page == "Dashboard":
     if deleted_ids:
         for d_id in deleted_ids:
             try:
-                requests.delete(f"{API_BASE}/api/v1/notifications/{d_id}")
+                resp = requests.delete(f"{API_BASE}/api/v1/notifications/{d_id}")
+                if resp.status_code != 200:
+                    raise Exception(f"API responded with {resp.status_code}")
             except Exception as e:
                 st.error(f"Failed to delete notification {d_id}: {e}")
+
         st.experimental_rerun()
 
 
 elif page == "Notifications":
     st.subheader("Notifications")
     notifs = fetch_json("/api/v1/notifications")
-    if "demo_notifications" not in st.session_state:
-        st.session_state["demo_notifications"] = demo_data.get("notifications", [])
     if not notifs:
-        notifs = st.session_state["demo_notifications"]
-    else:
-        notifs = st.session_state["demo_notifications"] + notifs
+        notifs = demo_data.get("notifications", [])
 
     deps = fetch_json("/dependencies")
     if not deps:
