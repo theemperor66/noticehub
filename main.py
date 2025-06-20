@@ -224,6 +224,46 @@ def get_notification_detail(notification_id: int):
     return jsonify(serialize_notification(notification))
 
 
+@app.route("/api/v1/notifications/<int:notification_id>", methods=["PUT"])
+def update_notification_endpoint(notification_id: int):
+    if not request.is_json:
+        return jsonify({"error": "Request must be JSON"}), 415
+    data = request.json or {}
+
+    status_raw = data.get("status")
+    severity_raw = data.get("severity")
+    title = data.get("title")
+    service = data.get("service") or data.get("service_name")
+
+    status_enum = None
+    severity_enum = None
+    if status_raw is not None:
+        try:
+            status_enum = NotificationStatusEnum(status_raw)
+        except ValueError:
+            return jsonify({"error": f"Invalid status '{status_raw}'"}), 400
+    if severity_raw is not None:
+        try:
+            severity_enum = SeverityEnum(severity_raw)
+        except ValueError:
+            return jsonify({"error": f"Invalid severity '{severity_raw}'"}), 400
+
+    updated = crud.update_notification(
+        g.db,
+        notification_id,
+        title=title,
+        status=status_enum,
+        service_name=service,
+        severity=severity_enum,
+    )
+    if not updated:
+        return (
+            jsonify({"error": f"Notification with ID {notification_id} not found"}),
+            404,
+        )
+    return jsonify(serialize_notification(updated))
+
+
 @app.route("/api/v1/notifications/<int:notification_id>", methods=["DELETE"])
 def delete_notification_api(notification_id: int):
     success = crud.delete_notification(g.db, notification_id)

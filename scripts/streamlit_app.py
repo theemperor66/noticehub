@@ -1,6 +1,4 @@
-import json
 import os
-from datetime import datetime
 from typing import Any, Dict, List
 
 import env_utils
@@ -24,14 +22,6 @@ card_css = """
 </style>
 """
 st.markdown(card_css, unsafe_allow_html=True)
-
-demo_path = os.path.join(os.path.dirname(__file__), "demo_data.json")
-try:
-    with open(demo_path) as f:
-        demo_data = json.load(f)
-except Exception as e:
-    st.warning(f"Failed to load demo data: {e}")
-    demo_data = {}
 
 
 def fetch_json(endpoint: str) -> List[Dict[str, Any]]:
@@ -71,20 +61,12 @@ page = st.sidebar.radio(
 if page == "Dashboard":
     st.subheader("External Providers Dashboard")
     notifs = fetch_json("/api/v1/notifications")
-    if not notifs:
-        notifs = demo_data.get("notifications", [])
 
     services = fetch_json("/external-services")
-    if not services:
-        services = demo_data.get("external_services", [])
 
     systems = fetch_json("/internal-systems")
-    if not systems:
-        systems = demo_data.get("internal_systems", [])
 
     deps = fetch_json("/dependencies")
-    if not deps:
-        deps = demo_data.get("dependencies", [])
 
     status_classes = {
         "none": "status-green",  # green
@@ -215,37 +197,59 @@ if page == "Dashboard":
         num_rows="dynamic",
         use_container_width=True,
         key="impact_editor",
+        height=300,
     )
 
     if "ID" in df.columns and "ID" in edited_df.columns:
         deleted_ids = set(df["ID"]) - set(edited_df["ID"])
     else:
         deleted_ids = set()
+    updated = False
     if deleted_ids:
         for d_id in deleted_ids:
             try:
                 resp = requests.delete(f"{API_BASE}/api/v1/notifications/{d_id}")
-                if resp.status_code != 200:
-                    raise Exception(f"API responded with {resp.status_code}")
+                resp.raise_for_status()
             except Exception as e:
                 st.error(f"Failed to delete notification {d_id}: {e}")
+            else:
+                updated = True
 
+    if set(df["ID"]) == set(edited_df.get("ID", [])):
+        for _, new_row in edited_df.iterrows():
+            orig_row = df[df["ID"] == new_row["ID"]].iloc[0]
+            payload = {}
+            if new_row["Notification"] != orig_row["Notification"]:
+                payload["title"] = new_row["Notification"]
+            if new_row["Severity"] != orig_row["Severity"]:
+                payload["severity"] = new_row["Severity"]
+            if new_row["Status"] != orig_row["Status"]:
+                payload["status"] = new_row["Status"]
+            if new_row["Service"] != orig_row["Service"]:
+                payload["service"] = new_row["Service"]
+            if payload:
+                try:
+                    resp = requests.put(
+                        f"{API_BASE}/api/v1/notifications/{new_row['ID']}",
+                        json=payload,
+                    )
+                    resp.raise_for_status()
+                except Exception as e:
+                    st.error(f"Failed to update notification {new_row['ID']}: {e}")
+                else:
+                    updated = True
+
+    if updated:
         st.experimental_rerun()
 
 
 elif page == "Notifications":
     st.subheader("Notifications")
     notifs = fetch_json("/api/v1/notifications")
-    if not notifs:
-        notifs = demo_data.get("notifications", [])
 
     deps = fetch_json("/dependencies")
-    if not deps:
-        deps = demo_data.get("dependencies", [])
 
     systems = fetch_json("/internal-systems")
-    if not systems:
-        systems = demo_data.get("internal_systems", [])
     sys_map = {s["id"]: s["system_name"] for s in systems}
     rows = []
     for n in notifs:
@@ -265,7 +269,7 @@ elif page == "Notifications":
                 "created_at": n.get("created_at"),
             }
         )
-    st.dataframe(rows)
+    st.dataframe(rows, use_container_width=True, height=400)
 
     with st.expander("Add Notification from Demo Email"):
         demo_dir = os.path.join(os.path.dirname(__file__), "demo_emails")
@@ -308,9 +312,7 @@ elif page == "Notifications":
 elif page == "Services":
     st.subheader("External Services")
     services = fetch_json("/external-services")
-    if not services:
-        services = demo_data.get("external_services", [])
-    st.dataframe(services)
+    st.dataframe(services, use_container_width=True, height=400)
     with st.expander("Add External Service"):
         with st.form("create_service"):
             s_name = st.text_input("Service name")
@@ -330,9 +332,7 @@ elif page == "Services":
 
     st.subheader("Internal Systems")
     systems = fetch_json("/internal-systems")
-    if not systems:
-        systems = demo_data.get("internal_systems", [])
-    st.dataframe(systems)
+    st.dataframe(systems, use_container_width=True, height=400)
     with st.expander("Add Internal System"):
         with st.form("create_system"):
             i_name = st.text_input("System name")
@@ -351,8 +351,6 @@ elif page == "Services":
                 st.experimental_rerun()
 
     deps = fetch_json("/dependencies")
-    if not deps:
-        deps = demo_data.get("dependencies", [])
     st.subheader("Dependencies")
     dep_rows = [
         {
@@ -363,7 +361,7 @@ elif page == "Services":
         }
         for d in deps
     ]
-    st.dataframe(dep_rows)
+    st.dataframe(dep_rows, use_container_width=True, height=400)
     with st.expander("Add Dependency"):
         with st.form("create_dep"):
             internal = {s["system_name"]: s["id"] for s in systems}
@@ -403,11 +401,6 @@ elif page == "Email Settings":
     cfg = fetch_dict("/api/v1/email-config")
     if not cfg:
         cfg = env_utils.load_env()
-        if not cfg:
-            cfg = demo_data.get("email_config", {})
-        else:
-            for k, v in demo_data.get("email_config", {}).items():
-                cfg.setdefault(k, v)
     with st.form("email_cfg"):
         server = st.text_input("Server", cfg.get("EMAIL_SERVER", ""))
         port = st.number_input("Port", value=int(cfg.get("EMAIL_PORT", 993)), step=1)

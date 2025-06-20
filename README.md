@@ -75,6 +75,11 @@ that represents a fictional company using common cloud providers such as
 AWS, Azure, Google Cloud, GitHub and Cloudflare. These entries are
 stored in the database like normal records and can be removed at any
 time. The UI no longer merges demo data with newly created entries.
+All content shown in the Streamlit dashboard is now fetched exclusively
+from the API; the application no longer loads `demo_data.json` as a
+fallback.
+Table edits in the dashboard are saved back to the API and all tables
+scroll when content exceeds their height.
 
 You can also process example HTML emails directly from the
 "Notifications" page. Selecting a demo email shows a small preview and

@@ -307,6 +307,50 @@ def get_pending_notifications(
     )
 
 
+def update_notification(
+    db: Session,
+    notification_id: int,
+    *,
+    title: Optional[str] = None,
+    status: Optional[NotificationStatusEnum] = None,
+    service_name: Optional[str] = None,
+    severity: Optional[SeverityEnum] = None,
+) -> Optional[Notification]:
+    """Update a notification and related LLM data."""
+    notification = (
+        db.query(Notification)
+        .options(joinedload(Notification.llm_data))
+        .filter(Notification.id == notification_id)
+        .first()
+    )
+    if not notification:
+        logger.warning(
+            f"Notification with ID {notification_id} not found for update."
+        )
+        return None
+
+    if title is not None:
+        notification.title = title
+    if status is not None:
+        notification.status = status
+    if notification.llm_data:
+        if service_name is not None:
+            notification.llm_data.extracted_service_name = service_name
+        if severity is not None:
+            notification.llm_data.severity = severity
+
+    try:
+        db.commit()
+        db.refresh(notification)
+        return notification
+    except Exception as e:
+        db.rollback()
+        logger.error(
+            f"Error updating notification ID {notification_id}: {e}", exc_info=True
+        )
+        return None
+
+
 def delete_notification(db: Session, notification_id: int) -> bool:
     """Deletes a notification and its related data."""
     notification = (
