@@ -68,24 +68,20 @@ cp .env.example .env
 pytest
 ```
 
-## Demo Mode
+## Sample Data
 
-The Streamlit dashboard can run in a self-contained demo mode. Set `DEMO_MODE=true`
-in your environment before launching the UI to start with demo data by default.
-You can toggle demo mode on or off from the sidebar while the app is running.
+The dashboard loads a demo dataset on startup that represents a
+fictional company using common cloud providers such as AWS, Azure,
+Google Cloud, GitHub and Cloudflare. If the backend API has no data
+yet, these examples are shown on their own. Once real notifications are
+created they are **merged** with the demo entries so the initial
+examples remain visible.
 
-```bash
-export DEMO_MODE=true
-streamlit run scripts/streamlit_app.py
-```
+You can also process example HTML emails directly from the
+"Notifications" page. Selecting a demo email shows a small preview and
+the file can be sent to the backend through `/api/v1/process-html-email`
+for full LLM processing. Several sample provider emails are available in
+`scripts/demo_emails`.
 
-The demo dataset now includes multiple example notifications, external services,
-internal systems, and dependency mappings so that all dashboard sections work
-without a backend. The **Dashboard** page now displays a color‑coded status
-board for each external provider along with the impacted internal systems from
-the latest notifications. Status badges use the `streamlit-shadcn-ui` library
-for consistent styling. Email settings are shown with placeholder values and are
-read-only in demo mode.
-
-An API endpoint `/api/v1/email-config` has been added for retrieving and
+An API endpoint `/api/v1/email-config` is available for retrieving and
 updating email configuration when running against the real backend.

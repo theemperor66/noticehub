@@ -1,5 +1,6 @@
 import json
 import os
+from datetime import datetime
 from typing import Any, Dict, List
 
 import env_utils
@@ -9,7 +10,6 @@ import streamlit as st
 import streamlit_shadcn_ui as ui
 
 API_BASE = os.getenv("API_BASE", "http://app:5001")
-DEFAULT_DEMO_MODE = os.getenv("DEMO_MODE", "false").lower() == "true"
 
 st.set_page_config(page_title="NoticeHub Dashboard", layout="wide")
 st.title("NoticeHub Dashboard")
@@ -25,15 +25,13 @@ card_css = """
 """
 st.markdown(card_css, unsafe_allow_html=True)
 
-demo_mode = st.sidebar.checkbox("Demo mode", value=DEFAULT_DEMO_MODE)
-demo_data = {}
-if demo_mode:
-    demo_path = os.path.join(os.path.dirname(__file__), "demo_data.json")
-    try:
-        with open(demo_path) as f:
-            demo_data = json.load(f)
-    except Exception as e:
-        st.warning(f"Failed to load demo data: {e}")
+demo_path = os.path.join(os.path.dirname(__file__), "demo_data.json")
+try:
+    with open(demo_path) as f:
+        demo_data = json.load(f)
+except Exception as e:
+    st.warning(f"Failed to load demo data: {e}")
+    demo_data = {}
 
 
 def fetch_json(endpoint: str) -> List[Dict[str, Any]]:
@@ -44,6 +42,16 @@ def fetch_json(endpoint: str) -> List[Dict[str, Any]]:
     except Exception as e:
         st.error(f"Failed to load {endpoint}: {e}")
         return []
+
+
+def fetch_dict(endpoint: str) -> Dict[str, Any]:
+    try:
+        resp = requests.get(f"{API_BASE}{endpoint}")
+        resp.raise_for_status()
+        return resp.json()
+    except Exception as e:
+        st.error(f"Failed to load {endpoint}: {e}")
+        return {}
 
 
 def create_item(endpoint: str, payload: Dict[str, Any]):
@@ -62,25 +70,25 @@ page = st.sidebar.radio(
 
 if page == "Dashboard":
     st.subheader("External Providers Dashboard")
-    if demo_mode:
-        if "demo_notifications" not in st.session_state:
-            st.session_state["demo_notifications"] = demo_data.get("notifications", [])
+    notifs = fetch_json("/api/v1/notifications")
+    if "demo_notifications" not in st.session_state:
+        st.session_state["demo_notifications"] = demo_data.get("notifications", [])
+    if not notifs:
         notifs = st.session_state["demo_notifications"]
     else:
-        notifs = fetch_json("/api/v1/notifications")
-    services = (
-        demo_data.get("external_services", [])
-        if demo_mode
-        else fetch_json("/external-services")
-    )
-    systems = (
-        demo_data.get("internal_systems", [])
-        if demo_mode
-        else fetch_json("/internal-systems")
-    )
-    deps = (
-        demo_data.get("dependencies", []) if demo_mode else fetch_json("/dependencies")
-    )
+        notifs = st.session_state["demo_notifications"] + notifs
+
+    services = fetch_json("/external-services")
+    if not services:
+        services = demo_data.get("external_services", [])
+
+    systems = fetch_json("/internal-systems")
+    if not systems:
+        systems = demo_data.get("internal_systems", [])
+
+    deps = fetch_json("/dependencies")
+    if not deps:
+        deps = demo_data.get("dependencies", [])
 
     status_classes = {
         "none": "status-green",  # green
@@ -218,35 +226,31 @@ if page == "Dashboard":
     else:
         deleted_ids = set()
     if deleted_ids:
-        if demo_mode:
-            st.session_state["demo_notifications"] = [
-                n for idx, n in enumerate(notifs) if n.get("id", idx) not in deleted_ids
-            ]
-        else:
-            for d_id in deleted_ids:
-                try:
-                    requests.delete(f"{API_BASE}/api/v1/notifications/{d_id}")
-                except Exception as e:
-                    st.error(f"Failed to delete notification {d_id}: {e}")
+        for d_id in deleted_ids:
+            try:
+                requests.delete(f"{API_BASE}/api/v1/notifications/{d_id}")
+            except Exception as e:
+                st.error(f"Failed to delete notification {d_id}: {e}")
         st.experimental_rerun()
 
 
 elif page == "Notifications":
     st.subheader("Notifications")
-    if demo_mode:
-        if "demo_notifications" not in st.session_state:
-            st.session_state["demo_notifications"] = demo_data.get("notifications", [])
+    notifs = fetch_json("/api/v1/notifications")
+    if "demo_notifications" not in st.session_state:
+        st.session_state["demo_notifications"] = demo_data.get("notifications", [])
+    if not notifs:
         notifs = st.session_state["demo_notifications"]
     else:
-        notifs = fetch_json("/api/v1/notifications")
-    deps = (
-        demo_data.get("dependencies", []) if demo_mode else fetch_json("/dependencies")
-    )
-    systems = (
-        demo_data.get("internal_systems", [])
-        if demo_mode
-        else fetch_json("/internal-systems")
-    )
+        notifs = st.session_state["demo_notifications"] + notifs
+
+    deps = fetch_json("/dependencies")
+    if not deps:
+        deps = demo_data.get("dependencies", [])
+
+    systems = fetch_json("/internal-systems")
+    if not systems:
+        systems = demo_data.get("internal_systems", [])
     sys_map = {s["id"]: s["system_name"] for s in systems}
     rows = []
     for n in notifs:
@@ -268,13 +272,49 @@ elif page == "Notifications":
         )
     st.dataframe(rows)
 
+    with st.expander("Add Notification from Demo Email"):
+        demo_dir = os.path.join(os.path.dirname(__file__), "demo_emails")
+        try:
+            files = [f for f in os.listdir(demo_dir) if f.endswith(".html")]
+        except Exception:
+            files = []
+        if files:
+            selected = st.selectbox("Select demo email", files, key="demo_email")
+            email_path = os.path.join(demo_dir, selected)
+            html_preview = ""
+            try:
+                with open(email_path) as f:
+                    html_preview = f.read()
+            except Exception as e:
+                st.error(f"Failed to load {selected}: {e}")
+
+            if html_preview:
+                st.markdown("**Preview:**")
+                st.components.v1.html(html_preview, height=200, scrolling=True)
+
+            if st.button("Process Email"):
+                subject = selected.replace("_", " ").replace(".html", "").title()
+                payload = {
+                    "subject": subject,
+                    "html": html_preview,
+                    "sender": "demo@provider.com",
+                }
+                resp = requests.post(
+                    f"{API_BASE}/api/v1/process-html-email", json=payload
+                )
+                if resp.status_code == 201:
+                    st.success("Email processed and notification created.")
+                    st.experimental_rerun()
+                else:
+                    st.error(f"Failed to process email: {resp.text}")
+        else:
+            st.info("No demo email files found.")
+
 elif page == "Services":
     st.subheader("External Services")
-    services = (
-        demo_data.get("external_services", [])
-        if demo_mode
-        else fetch_json("/external-services")
-    )
+    services = fetch_json("/external-services")
+    if not services:
+        services = demo_data.get("external_services", [])
     st.dataframe(services)
     with st.expander("Add External Service"):
         with st.form("create_service"):
@@ -282,26 +322,21 @@ elif page == "Services":
             s_provider = st.text_input("Provider")
             s_desc = st.text_area("Description")
             if st.form_submit_button("Create"):
-                if demo_mode:
-                    st.info("Demo mode: item not created.")
-                else:
-                    create_item(
-                        "/external-services",
-                        {
-                            "service_name": s_name,
-                            "provider": s_provider,
-                            "description": s_desc,
-                        },
-                    )
-                    services = fetch_json("/external-services")
-                    st.experimental_rerun()
+                create_item(
+                    "/external-services",
+                    {
+                        "service_name": s_name,
+                        "provider": s_provider,
+                        "description": s_desc,
+                    },
+                )
+                services = fetch_json("/external-services")
+                st.experimental_rerun()
 
     st.subheader("Internal Systems")
-    systems = (
-        demo_data.get("internal_systems", [])
-        if demo_mode
-        else fetch_json("/internal-systems")
-    )
+    systems = fetch_json("/internal-systems")
+    if not systems:
+        systems = demo_data.get("internal_systems", [])
     st.dataframe(systems)
     with st.expander("Add Internal System"):
         with st.form("create_system"):
@@ -309,23 +344,20 @@ elif page == "Services":
             i_contact = st.text_input("Responsible contact")
             i_desc = st.text_area("Description")
             if st.form_submit_button("Create"):
-                if demo_mode:
-                    st.info("Demo mode: item not created.")
-                else:
-                    create_item(
-                        "/internal-systems",
-                        {
-                            "system_name": i_name,
-                            "responsible_contact": i_contact,
-                            "description": i_desc,
-                        },
-                    )
-                    systems = fetch_json("/internal-systems")
-                    st.experimental_rerun()
+                create_item(
+                    "/internal-systems",
+                    {
+                        "system_name": i_name,
+                        "responsible_contact": i_contact,
+                        "description": i_desc,
+                    },
+                )
+                systems = fetch_json("/internal-systems")
+                st.experimental_rerun()
 
-    deps = (
-        demo_data.get("dependencies", []) if demo_mode else fetch_json("/dependencies")
-    )
+    deps = fetch_json("/dependencies")
+    if not deps:
+        deps = demo_data.get("dependencies", [])
     st.subheader("Dependencies")
     dep_rows = [
         {
@@ -345,18 +377,15 @@ elif page == "Services":
             dep_es = st.selectbox("External service", list(external.keys()))
             dep_desc = st.text_area("Description")
             if st.form_submit_button("Create"):
-                if demo_mode:
-                    st.info("Demo mode: item not created.")
-                else:
-                    create_item(
-                        "/dependencies",
-                        {
-                            "internal_system_id": internal[dep_is],
-                            "external_service_id": external[dep_es],
-                            "dependency_description": dep_desc,
-                        },
-                    )
-                    st.experimental_rerun()
+                create_item(
+                    "/dependencies",
+                    {
+                        "internal_system_id": internal[dep_is],
+                        "external_service_id": external[dep_es],
+                        "dependency_description": dep_desc,
+                    },
+                )
+                st.experimental_rerun()
 
     if services and systems and deps:
         import graphviz
@@ -376,11 +405,14 @@ elif page == "Services":
 
 elif page == "Email Settings":
     st.subheader("Email Server Configuration")
-    cfg = (
-        demo_data.get("email_config", env_utils.load_env())
-        if demo_mode
-        else env_utils.load_env()
-    )
+    cfg = fetch_dict("/api/v1/email-config")
+    if not cfg:
+        cfg = env_utils.load_env()
+        if not cfg:
+            cfg = demo_data.get("email_config", {})
+        else:
+            for k, v in demo_data.get("email_config", {}).items():
+                cfg.setdefault(k, v)
     with st.form("email_cfg"):
         server = st.text_input("Server", cfg.get("EMAIL_SERVER", ""))
         port = st.number_input("Port", value=int(cfg.get("EMAIL_PORT", 993)), step=1)
@@ -396,17 +428,17 @@ elif page == "Email Settings":
         )
         submitted = st.form_submit_button("Save")
     if submitted:
-        if demo_mode:
-            st.info("Demo mode: configuration not saved.")
-        else:
-            env_utils.update_env(
-                {
-                    "EMAIL_SERVER": server,
-                    "EMAIL_PORT": int(port),
-                    "EMAIL_USERNAME": username,
-                    "EMAIL_PASSWORD": password,
-                    "EMAIL_FOLDER": folder,
-                    "EMAIL_CHECK_INTERVAL_SECONDS": int(interval),
-                }
-            )
+        payload = {
+            "EMAIL_SERVER": server,
+            "EMAIL_PORT": int(port),
+            "EMAIL_USERNAME": username,
+            "EMAIL_PASSWORD": password,
+            "EMAIL_FOLDER": folder,
+            "EMAIL_CHECK_INTERVAL_SECONDS": int(interval),
+        }
+        try:
+            resp = requests.post(f"{API_BASE}/api/v1/email-config", json=payload)
+            resp.raise_for_status()
             st.success("Configuration saved. Restart backend to apply changes.")
+        except Exception as e:
+            st.error(f"Failed to save configuration: {e}")

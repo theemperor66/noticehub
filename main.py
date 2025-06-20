@@ -3,6 +3,7 @@ import os
 import sys
 import threading
 import time
+import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -40,7 +41,7 @@ from src.data.schemas import (
     InternalSystemUpdate,
 )
 from src.email.client import EmailClient
-from src.email.parser import clean_email_body, pre_filter_email
+from src.email.parser import clean_email_body, parse_html_to_text, pre_filter_email
 from src.llm.llm_factory import LLMFactory
 from src.notifications.notifier import send_email_notification
 from src.utils.logger import logger
@@ -655,16 +656,17 @@ def api_delete_dependency(dependency_id: int):
 
 @app.route("/api/v1/email-config", methods=["GET"])
 def api_get_email_config():
-    cfg = env_utils.load_env()
-    keys = [
-        "EMAIL_SERVER",
-        "EMAIL_PORT",
-        "EMAIL_USERNAME",
-        "EMAIL_PASSWORD",
-        "EMAIL_FOLDER",
-        "EMAIL_CHECK_INTERVAL_SECONDS",
-    ]
-    return jsonify({k: cfg.get(k, "") for k in keys})
+    """Return the currently loaded email configuration."""
+    return jsonify(
+        {
+            "EMAIL_SERVER": config.settings.email_server,
+            "EMAIL_PORT": config.settings.email_port,
+            "EMAIL_USERNAME": config.settings.email_username,
+            "EMAIL_PASSWORD": config.settings.email_password,
+            "EMAIL_FOLDER": config.settings.email_folder,
+            "EMAIL_CHECK_INTERVAL_SECONDS": config.settings.email_check_interval_seconds,
+        }
+    )
 
 
 @app.route("/api/v1/email-config", methods=["POST"])
@@ -682,6 +684,106 @@ def api_update_email_config_endpoint():
     }
     env_utils.update_env({k: v for k, v in update_values.items() if v is not None})
     return jsonify({"message": "Configuration updated"})
+
+
+@app.route("/api/v1/process-html-email", methods=["POST"])
+def api_process_html_email():
+    """Create a notification from posted HTML email content."""
+    if not request.is_json:
+        return jsonify({"error": "Request must be JSON"}), 415
+    data = request.json or {}
+    html = data.get("html", "")
+    if not html:
+        return jsonify({"error": "No HTML provided"}), 400
+
+    subject = data.get("subject", "Demo Email")
+    sender = data.get("sender")
+    original_id = data.get("original_id", f"demo_{uuid.uuid4()}")
+    received_at_str = data.get("received_at")
+    try:
+        received_at = (
+            date_parser.parse(received_at_str) if received_at_str else datetime.utcnow()
+        )
+    except Exception:
+        received_at = datetime.utcnow()
+
+    body_text = clean_email_body(parse_html_to_text(html))
+
+    notification = crud.create_notification(
+        db=g.db,
+        subject=subject,
+        received_at=received_at,
+        original_email_id_str=original_id,
+        sender=sender,
+        email_body_text=body_text,
+        email_body_html=html,
+    )
+
+    if not notification:
+        return jsonify({"error": "Failed to create notification"}), 500
+
+    llm_client = None
+    if body_text and (
+        config.settings.openai_api_key
+        or config.settings.google_api_key
+        or config.settings.groq_api_key
+    ):
+        try:
+            llm_client = LLMFactory.get_llm_client()
+        except Exception as e:
+            logger.warning(f"LLM client creation failed: {e}")
+
+    if llm_client and body_text:
+        try:
+            llm_response = llm_client.analyze_text(
+                text=body_text,
+                prompt_template=INITIAL_EXTRACTION_PROMPT_TEMPLATE,
+                email_subject=subject,
+                email_body=body_text,
+            )
+            raw_llm_response = json.dumps(llm_response)
+            if llm_response and not llm_response.get("error"):
+                crud.update_llm_data_extracted_fields(
+                    db=g.db,
+                    llm_data_id=notification.llm_data_id,
+                    extracted_service_name=llm_response.get("extracted_service_name"),
+                    event_start_time=parse_llm_datetime(
+                        llm_response.get("event_start_time")
+                    ),
+                    event_end_time=parse_llm_datetime(
+                        llm_response.get("event_end_time")
+                    ),
+                    notification_type=parse_llm_notification_type(
+                        llm_response.get("notification_type")
+                    ),
+                    severity=parse_llm_severity(llm_response.get("severity_level")),
+                    llm_summary=llm_response.get("event_summary"),
+                    raw_llm_response=raw_llm_response,
+                    processing_status=ProcessingStatusEnum.COMPLETED,
+                )
+                crud.analyze_notification_impacts(
+                    g.db, notification.id, llm_response.get("extracted_service_name")
+                )
+            else:
+                crud.update_llm_data_status(
+                    g.db,
+                    notification.llm_data_id,
+                    ProcessingStatusEnum.ERROR,
+                    llm_response.get("error")
+                    if isinstance(llm_response, dict)
+                    else "LLM error",
+                    raw_llm_response,
+                )
+        except Exception as e:
+            logger.error(f"LLM analysis failed: {e}")
+            crud.update_llm_data_status(
+                g.db,
+                notification.llm_data_id,
+                ProcessingStatusEnum.ERROR,
+                str(e),
+            )
+
+    return jsonify(serialize_notification(notification)), 201
 
 
 # --- Parsing Helpers (from original file, slightly adapted) ---
