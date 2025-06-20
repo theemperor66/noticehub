@@ -24,9 +24,11 @@ class GroqLLM(BaseLLM):
             raise ValueError(
                 "Groq API key is required. Set GROQ_API_KEY in .env or pass directly."
             )
-        self.base_url = base_url or "https://api.groq.com/openai/v1"
+        self.base_url = base_url or "https://api.groq.com"
         self.client = groq.Groq(api_key=self.api_key, base_url=self.base_url)
-        logger.info(f"Groq LLM initialized with model: {self.model_name}")
+        logger.info(
+            f"Groq LLM initialized with model: {self.model_name} using base_url: {self.base_url}"
+        )
 
     def generate_text(
         self, prompt: str, max_tokens: int = 2000, temperature: float = 0.2, **kwargs
