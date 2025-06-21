@@ -80,6 +80,7 @@ Return the information as a JSON object with these exact keys:
 'extracted_service_name', 'event_start_time', 'event_end_time', 'notification_type', 'event_summary', 'severity_level'.
 
 - 'extracted_service_name': The name of the service mentioned (e.g., "AWS EC2", "GitHub Actions").
+- 'extracted_service_name': Choose from the following known services when possible: {service_options}
 - 'event_start_time': The start date and time of the event (YYYY-MM-DD HH:MM UTC or ISO 8601). If not found, use null.
 - 'event_end_time': The end date and time of the event (YYYY-MM-DD HH:MM UTC or ISO 8601). If not found, use null.
 - 'notification_type': One of ["maintenance", "outage", "update", "alert", "info", "security", "unknown"].
@@ -793,12 +794,16 @@ def api_process_html_email():
 
     if llm_client and body_text:
         try:
-            llm_response = analyze_with_retry(
+            service_names = ", ".join(
+                s.service_name for s in crud.get_external_services(g.db)
+            )
+            llm_response = analyze_with_voting(
                 llm_client,
                 text=body_text,
                 prompt_template=INITIAL_EXTRACTION_PROMPT_TEMPLATE,
                 email_subject=subject,
                 email_body=body_text,
+                service_options=service_names,
             )
             raw_llm_response = json.dumps(llm_response)
             if llm_response and not llm_response.get("error"):
@@ -887,6 +892,26 @@ def parse_llm_notification_type(type_str: Optional[str]) -> NotificationTypeEnum
 def parse_llm_severity(severity_str: Optional[str]) -> SeverityEnum:
     if not severity_str or severity_str.strip() == "":
         return SeverityEnum.UNKNOWN
+    processed_severity_str = severity_str.lower().strip()
+    try:
+        return SeverityEnum(processed_severity_str)
+    except ValueError:
+        maps = {
+            "critical": SeverityEnum.CRITICAL,
+            "high": SeverityEnum.HIGH,
+            "medium": SeverityEnum.MEDIUM,
+            "moderate": SeverityEnum.MEDIUM,
+            "low": SeverityEnum.LOW,
+            "informational": SeverityEnum.INFO,
+            "info": SeverityEnum.INFO,
+        }
+        for key, val in maps.items():
+            if key in processed_severity_str:
+                return val
+        logger.warning(
+            f"Unknown severity string '{severity_str}', defaulted to UNKNOWN."
+        )
+        return SeverityEnum.UNKNOWN
 
 
 def validate_llm_extraction_response(data: Dict[str, Any]) -> bool:
@@ -951,26 +976,42 @@ def analyze_with_retry(
             f"LLM response validation failed on attempt {attempt + 1}: {response}"
         )
     return response
-    processed_severity_str = severity_str.lower().strip()
-    try:
-        return SeverityEnum(processed_severity_str)
-    except ValueError:
-        maps = {
-            "critical": SeverityEnum.CRITICAL,
-            "high": SeverityEnum.HIGH,
-            "medium": SeverityEnum.MEDIUM,
-            "moderate": SeverityEnum.MEDIUM,
-            "low": SeverityEnum.LOW,
-            "informational": SeverityEnum.INFO,
-            "info": SeverityEnum.INFO,
-        }
-        for key, val in maps.items():
-            if key in processed_severity_str:
-                return val
-        logger.warning(
-            f"Unknown severity string '{severity_str}', defaulted to UNKNOWN."
+
+
+def analyze_with_voting(
+    llm_client: BaseLLM,
+    *,
+    text: str,
+    prompt_template: str,
+    votes: int = 3,
+    **kwargs,
+) -> Dict[str, Any]:
+    """Run the LLM multiple times and return the most common extraction."""
+    vote_results: List[Dict[str, Any]] = []
+    for _ in range(votes):
+        vote_results.append(
+            analyze_with_retry(
+                llm_client,
+                text=text,
+                prompt_template=prompt_template,
+                **kwargs,
+            )
         )
-        return SeverityEnum.UNKNOWN
+
+    valid = [r for r in vote_results if not r.get("error") and validate_llm_extraction_response(r)]
+    if not valid:
+        return vote_results[0] if vote_results else {}
+
+    counts: Dict[str, int] = {}
+    for r in valid:
+        name = r.get("extracted_service_name")
+        counts[name] = counts.get(name, 0) + 1
+
+    majority = max(counts, key=counts.get)
+    for r in valid:
+        if r.get("extracted_service_name") == majority:
+            return r
+    return valid[0]
 
 
 # --- Main Email Processing Workflow (adapted to run with its own DB session) ---
@@ -1091,12 +1132,16 @@ def main_email_processing_workflow():
                 f"Sending content for Notification ID {notification_record.id} to LLM..."
             )
             try:
-                llm_response_dict = analyze_with_retry(
+                service_names = ", ".join(
+                    s.service_name for s in crud.get_external_services(db_session_local)
+                )
+                llm_response_dict = analyze_with_voting(
                     llm_client,
                     text=content_to_analyze,
                     prompt_template=INITIAL_EXTRACTION_PROMPT_TEMPLATE,
                     email_subject=raw_email_data["subject"],
                     email_body=content_to_analyze,
+                    service_options=service_names,
                 )
                 raw_llm_response_str = json.dumps(llm_response_dict)
 

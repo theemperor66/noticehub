@@ -89,3 +89,11 @@ for full LLM processing. Several sample provider emails are available in
 
 An API endpoint `/api/v1/email-config` is available for retrieving and
 updating email configuration when running against the real backend.
+
+### LLM Extraction Enhancements
+
+The extraction prompt now includes all external services stored in the
+database. The LLM is encouraged to pick the service name from this list
+when parsing incoming emails. Additionally, a lightweight voting
+mechanism runs the extraction several times and chooses the most common
+result, reducing hallucinated service names.
