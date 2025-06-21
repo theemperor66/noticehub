@@ -21,6 +21,7 @@ from src.data.models import (
     InternalSystem,
     LLMData,
     Notification,
+    NotificationStatusEnum,
     NotificationTypeEnum,
     ProcessingStatusEnum,
     RawEmail,

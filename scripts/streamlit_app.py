@@ -7,21 +7,66 @@ import requests
 import streamlit as st
 import streamlit_shadcn_ui as ui
 
+# Valid notification status values that match NotificationStatusEnum
+VALID_NOTIFICATION_STATUSES = [
+    "new",
+    "triaged",
+    "action_pending",
+    "in_progress",
+    "resolved",
+    "archived",
+    "error_processing",
+    "pending_manual_review",
+    "pending_validation"
+]
+
+# Valid severity levels that match SeverityEnum
+VALID_SEVERITY_LEVELS = [
+    "low", 
+    "medium", 
+    "high", 
+    "critical", 
+    "info", 
+    "unknown"
+]
+
 API_BASE = os.getenv("API_BASE", "http://app:5001")
 
 st.set_page_config(page_title="NoticeHub Dashboard", layout="wide")
 st.title("NoticeHub Dashboard")
 
 # Inject reusable styles for status cards
-card_css = """
-<style>
-.status-card {padding:0.75rem;border-radius:4px;color:white;text-align:center;}
-.status-green {background-color:#2ecc71;}
-.status-yellow {background-color:#f1c40f;}
-.status-red {background-color:#e74c3c;}
-</style>
+css = """
+.status-card {
+    padding: 1rem;
+    border-radius: 5px;
+    margin-bottom: 1rem;
+    text-align: center;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.24);
+    height: 100px;
+    min-height: 100px;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+}
+.status-red { background-color: #FF5252; color: white; }
+.status-yellow { background-color: #FFD740; color: black; }
+.status-green { background-color: #69F0AE; color: black; }
+
+.equal-cols {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(60px, 1fr));
+    gap: 5px;
+    width: 100%;
+}
+
+.card-container {
+    padding: 5px;
+}
 """
-st.markdown(card_css, unsafe_allow_html=True)
+st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
 
 
 def fetch_json(endpoint: str) -> List[Dict[str, Any]]:
@@ -90,35 +135,46 @@ if page == "Dashboard":
             for n in notifs
             if n.get("llm_data", {}).get("extracted_service_name") == name
         ]
-        open_related = [n for n in related if n.get("status") != "resolved"]
+        # Handle empty list safely
+        open_related = [n for n in related if n.get("status") != "resolved"] if related else []
         if open_related:
-            latest = sorted(
-                open_related, key=lambda x: x.get("created_at", ""), reverse=True
-            )[0]
-            sev = latest.get("llm_data", {}).get("severity", "low")
-            status = latest.get("status", "new")
+            try:
+                latest = sorted(
+                    open_related, key=lambda x: x.get("created_at", ""), reverse=True
+                )[0]
+                sev = latest.get("llm_data", {}).get("severity", "low")
+                status = latest.get("status", "new")
+            except (IndexError, KeyError):
+                sev = "none"
+                status = "operational"
         else:
             sev = "none"
             status = "operational"
         svc_status.append({"service": name, "status": status, "severity": sev})
-    # Display service status cards
-    cols = st.columns(max(1, len(svc_status)))
+    # Display service status cards using Streamlit's column system
+    # Calculate number of columns (aim for cards of around 150-200px width)
+    window_width = 1200  # Approximate width of a typical window
+    card_width = 180     # Target width for each card
+    num_cols = min(len(svc_status), max(3, window_width // card_width))  # At least 3 columns
+    
+    # Create columns
+    cols = st.columns(num_cols)
+    
+    # Add each card to the appropriate column (distributing evenly)
     for idx, info in enumerate(svc_status):
+        col_idx = idx % num_cols
         cls = status_classes.get(info["severity"], "status-green")
         sev_text = f" ({info['severity']})" if info["severity"] != "none" else ""
-        html = (
-            f"<div class='status-card {cls}'>"
-            f"<strong>{info['service']}</strong><br>{info['status'].title()}{sev_text}</div>"
-        )
-        with cols[idx % len(cols)]:
-            st.markdown(html, unsafe_allow_html=True)
-            ui.badges(
-                badge_list=[
-                    (info["severity"], variant_map.get(info["severity"], "secondary"))
-                ],
-                class_name="mt-1",
-                key=f"svc_badge_{idx}",
+        
+        with cols[col_idx]:
+            html = (
+                f"<div class='status-card {cls}' style='margin-bottom:10px; height:100px;'>"
+                f"<strong>{info['service']}</strong><br>{info['status'].title()}{sev_text}"
+                f"</div>"
             )
+            st.markdown(html, unsafe_allow_html=True)
+            
+            # No badge display - removed as requested
 
     # Determine status for each internal system based on dependent services
     severity_order = {"none": 0, "low": 1, "medium": 2, "high": 3}
@@ -146,31 +202,38 @@ if page == "Dashboard":
 
     if sys_status:
         st.markdown("### Internal System Status")
-        sys_cols = st.columns(max(1, len(sys_status)))
+        
+        # Calculate number of columns (aim for cards of around 150-200px width)
+        window_width = 1200  # Approximate width of a typical window
+        card_width = 180     # Target width for each card
+        num_cols = min(len(sys_status), max(3, window_width // card_width))  # At least 3 columns
+        
+        # Create columns
+        cols = st.columns(num_cols)
+        
+        # Add each card to the appropriate column (distributing evenly)
         for idx, info in enumerate(sys_status):
+            col_idx = idx % num_cols
             cls = status_classes.get(info["severity"], "status-green")
             sev_text = f" ({info['severity']})" if info["severity"] != "none" else ""
-            html = (
-                f"<div class='status-card {cls}'>"
-                f"<strong>{info['system']}</strong><br>{info['status'].title()}{sev_text}</div>"
-            )
-            with sys_cols[idx % len(sys_cols)]:
-                st.markdown(html, unsafe_allow_html=True)
-                ui.badges(
-                    badge_list=[
-                        (
-                            info["severity"],
-                            variant_map.get(info["severity"], "secondary"),
-                        )
-                    ],
-                    class_name="mt-1",
-                    key=f"sys_badge_{idx}",
+            
+            with cols[col_idx]:
+                html = (
+                    f"<div class='status-card {cls}' style='margin-bottom:10px; height:100px;'>"
+                    f"<strong>{info['system']}</strong><br>{info['status'].title()}{sev_text}"
+                    f"</div>"
                 )
+                st.markdown(html, unsafe_allow_html=True)
+                
+                # No badge display - removed as requested
 
     # Add a bit of space before the table
     st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
 
     sys_map = {s["id"]: s["system_name"] for s in systems}
+    # Get a list of all services for dropdowns
+    all_services = [svc.get("service_name") for svc in services if svc.get("service_name")]
+    
     impact_rows = []
     for idx, n in enumerate(notifs):
         svc = n.get("llm_data", {}).get("extracted_service_name")
@@ -191,6 +254,10 @@ if page == "Dashboard":
         )
 
     df = pd.DataFrame(impact_rows)
+    if df.empty:
+        df = pd.DataFrame(columns=["ID", "Service", "Notification", "Severity", "Status", "Impacted Systems"])
+    
+    # Add a dropdown for status field and other fields with valid values
     edited_df = st.data_editor(
         df,
         hide_index=True,
@@ -198,46 +265,122 @@ if page == "Dashboard":
         use_container_width=True,
         key="impact_editor",
         height=300,
+        column_config={
+            "ID": st.column_config.NumberColumn(
+                "ID",
+                disabled=True,
+                help="Auto-generated notification ID"
+            ),
+            "Service": st.column_config.SelectboxColumn(
+                "Service", 
+                options=all_services if all_services else ["No services available"],
+                required=True
+            ),
+            "Notification": st.column_config.TextColumn(
+                "Notification",
+                required=True
+            ),
+            "Severity": st.column_config.SelectboxColumn(
+                "Severity", 
+                options=VALID_SEVERITY_LEVELS,
+                required=True
+            ),
+            "Status": st.column_config.SelectboxColumn(
+                "Status", 
+                options=VALID_NOTIFICATION_STATUSES,
+                required=True
+            ),
+            "Impacted Systems": st.column_config.TextColumn(
+                "Impacted Systems",
+                disabled=True,
+                help="Automatically calculated based on service dependencies"
+            )
+        }
     )
 
-    if "ID" in df.columns and "ID" in edited_df.columns:
-        deleted_ids = set(df["ID"]) - set(edited_df["ID"])
-    else:
-        deleted_ids = set()
+    # Safe handling for empty dataframes and checking for deleted rows
     updated = False
-    if deleted_ids:
-        for d_id in deleted_ids:
+    
+    if not df.empty and "ID" in df.columns:
+        # Only process deletions if we have IDs in both dataframes
+        if "ID" in edited_df.columns:
+            deleted_ids = set(df["ID"]) - set(edited_df["ID"])
+            
+            if deleted_ids:
+                for d_id in deleted_ids:
+                    try:
+                        resp = requests.delete(f"{API_BASE}/api/v1/notifications/{d_id}")
+                        resp.raise_for_status()
+                    except Exception as e:
+                        st.error(f"Failed to delete notification {d_id}: {e}")
+                    else:
+                        updated = True
+    
+        # Handle updates to existing rows
+        if not df.empty and not edited_df.empty and "ID" in df.columns and "ID" in edited_df.columns:
+            # Check if IDs match (no rows deleted or added)
+            if set(df["ID"]) == set(edited_df["ID"]):
+                for _, new_row in edited_df.iterrows():
+                    if new_row["ID"] is not None and not pd.isna(new_row["ID"]):
+                        orig_row_df = df[df["ID"] == new_row["ID"]]
+                        if not orig_row_df.empty:
+                            orig_row = orig_row_df.iloc[0]
+                            payload = {}
+                            if new_row["Notification"] != orig_row["Notification"]:
+                                payload["title"] = new_row["Notification"]
+                            if new_row["Severity"] != orig_row["Severity"]:
+                                # Ensure severity is a valid enum value
+                                if new_row["Severity"] in VALID_SEVERITY_LEVELS:
+                                    payload["severity"] = new_row["Severity"]
+                                else:
+                                    st.warning(f"Invalid severity value: {new_row['Severity']}. Using original value.")
+                                    payload["severity"] = orig_row["Severity"]
+                            if new_row["Status"] != orig_row["Status"]:
+                                # Ensure status is a valid enum value
+                                if new_row["Status"] in VALID_NOTIFICATION_STATUSES:
+                                    payload["status"] = new_row["Status"]
+                                else:
+                                    st.warning(f"Invalid status value: {new_row['Status']}. Using original value.")
+                                    payload["status"] = orig_row["Status"]
+                            if new_row["Service"] != orig_row["Service"]:
+                                payload["service"] = new_row["Service"]
+                            if payload:
+                                try:
+                                    resp = requests.put(
+                                        f"{API_BASE}/api/v1/notifications/{new_row['ID']}",
+                                        json=payload,
+                                    )
+                                    resp.raise_for_status()
+                                except Exception as e:
+                                    st.error(f"Failed to update notification {new_row['ID']}: {e}")
+                                else:
+                                    updated = True
+
+    # Handle new rows (those with no ID or NaN ID)
+    if not edited_df.empty and "ID" in edited_df.columns:
+        # Look for rows where ID is NaN or None
+        new_rows = edited_df[edited_df["ID"].isna()]
+        for _, row in new_rows.iterrows():
+            # Don't try to create notifications with empty data
+            if pd.isna(row["Service"]) or pd.isna(row["Notification"]) or pd.isna(row["Status"]):
+                continue
+                
+            payload = {
+                "title": row["Notification"],
+                "service": row["Service"],
+                "severity": row["Severity"] if not pd.isna(row["Severity"]) else "info",
+                "status": row["Status"] if not pd.isna(row["Status"]) else "new"
+            }
             try:
-                resp = requests.delete(f"{API_BASE}/api/v1/notifications/{d_id}")
+                resp = requests.post(
+                    f"{API_BASE}/api/v1/notifications",
+                    json=payload
+                )
                 resp.raise_for_status()
             except Exception as e:
-                st.error(f"Failed to delete notification {d_id}: {e}")
+                st.error(f"Failed to create new notification: {e}")
             else:
                 updated = True
-
-    if set(df["ID"]) == set(edited_df.get("ID", [])):
-        for _, new_row in edited_df.iterrows():
-            orig_row = df[df["ID"] == new_row["ID"]].iloc[0]
-            payload = {}
-            if new_row["Notification"] != orig_row["Notification"]:
-                payload["title"] = new_row["Notification"]
-            if new_row["Severity"] != orig_row["Severity"]:
-                payload["severity"] = new_row["Severity"]
-            if new_row["Status"] != orig_row["Status"]:
-                payload["status"] = new_row["Status"]
-            if new_row["Service"] != orig_row["Service"]:
-                payload["service"] = new_row["Service"]
-            if payload:
-                try:
-                    resp = requests.put(
-                        f"{API_BASE}/api/v1/notifications/{new_row['ID']}",
-                        json=payload,
-                    )
-                    resp.raise_for_status()
-                except Exception as e:
-                    st.error(f"Failed to update notification {new_row['ID']}: {e}")
-                else:
-                    updated = True
 
     if updated:
         st.experimental_rerun()
