@@ -5,13 +5,14 @@ import json
 import random
 from typing import (  # Ensure List and Optional are imported; Retaining these just in case, though List and Optional are primary
     Any,
+    Dict,
     List,
     Optional,
     Type,
     TypeVar,
 )
 
-from sqlalchemy import func
+from sqlalchemy import func, exists, or_, and_
 from sqlalchemy.orm import Query, Session, joinedload
 
 from src.data.models import (
@@ -118,17 +119,135 @@ def create_notification(
         db.refresh(db_raw_email)
         db.refresh(db_llm_data)
         db.refresh(db_notification)
+        
+        # Commit the transaction
+        db.commit()
+        
         logger.info(
             f"Created Notification ID {db_notification.id} (RawEmail ID: {db_raw_email.id}, LLMData ID: {db_llm_data.id}) for original email hash {hashed_email_id}"
         )
         return db_notification
     except Exception as e:
+        # Roll back the transaction on error
         db.rollback()
         logger.error(
             f"Error creating notification for original_email_id_str {original_email_id_str}: {e}",
             exc_info=True,
         )
         return None
+
+
+def check_and_fix_data_consistency(db: Session) -> dict:
+    """
+    Performs database consistency checks and fixes issues where possible.
+    
+    This function checks for:
+    1. Orphaned LLMData records (no associated notification)
+    2. Orphaned RawEmail records (no associated notification)
+    3. Notifications with missing related records (llm_data or raw_email)
+    4. NotificationImpacts with non-existent notification references
+    
+    Returns a dictionary with statistics about found and fixed issues.
+    """
+    stats = {
+        "orphaned_llm_data": 0,
+        "orphaned_raw_email": 0,
+        "incomplete_notifications": 0,
+        "orphaned_impacts": 0,
+        "fixed_issues": 0,
+        "errors": 0
+    }
+    
+    try:
+        # Use a nested transaction for atomicity
+        with db.begin_nested() as nested_transaction:
+            try:
+                # 1. Check for orphaned LLMData records
+                orphaned_llm_data_records = (
+                    db.query(LLMData)
+                    .outerjoin(Notification, Notification.llm_data_id == LLMData.id)
+                    .filter(Notification.id.is_(None))
+                    .all()
+                )
+                
+                stats["orphaned_llm_data"] = len(orphaned_llm_data_records)
+                for record in orphaned_llm_data_records:
+                    logger.warning(f"Found orphaned LLMData ID {record.id}, cleaning up")
+                    db.delete(record)
+                    stats["fixed_issues"] += 1
+                
+                # 2. Check for orphaned RawEmail records
+                orphaned_raw_email_records = (
+                    db.query(RawEmail)
+                    .outerjoin(Notification, Notification.raw_email_id == RawEmail.id)
+                    .filter(Notification.id.is_(None))
+                    .all()
+                )
+                
+                stats["orphaned_raw_email"] = len(orphaned_raw_email_records)
+                for record in orphaned_raw_email_records:
+                    logger.warning(f"Found orphaned RawEmail ID {record.id}, cleaning up")
+                    db.delete(record)
+                    stats["fixed_issues"] += 1
+                
+                # 3. Check for notifications with missing related records
+                # This query uses raw SQL to find notifications with non-existent related records
+                incomplete_notifications = []
+                # Check for notifications with non-existent llm_data
+                for notification in db.query(Notification).filter(Notification.llm_data_id.isnot(None)).all():
+                    if not db.query(LLMData).filter(LLMData.id == notification.llm_data_id).first():
+                        incomplete_notifications.append(notification)
+                
+                # Check for notifications with non-existent raw_email
+                for notification in db.query(Notification).filter(Notification.raw_email_id.isnot(None)).all():
+                    if not notification in incomplete_notifications and not db.query(RawEmail).filter(RawEmail.id == notification.raw_email_id).first():
+                        incomplete_notifications.append(notification)
+                
+                stats["incomplete_notifications"] = len(incomplete_notifications)
+                for notification in incomplete_notifications:
+                    logger.warning(f"Notification ID {notification.id} has missing related records, marking for deletion")
+                    # This is a serious inconsistency - delete the notification
+                    delete_notification(db, notification.id)
+                    stats["fixed_issues"] += 1
+                
+                # 4. Check for orphaned impacts
+                orphaned_impacts = (
+                    db.query(NotificationImpact)
+                    .outerjoin(Notification, NotificationImpact.notification_id == Notification.id)
+                    .filter(Notification.id.is_(None))
+                    .all()
+                )
+                
+                stats["orphaned_impacts"] = len(orphaned_impacts)
+                for impact in orphaned_impacts:
+                    logger.warning(f"Found orphaned NotificationImpact ID {impact.id}, cleaning up")
+                    db.delete(impact)
+                    stats["fixed_issues"] += 1
+                
+                # If we got this far, all fixes were successful
+                nested_transaction.commit()
+                
+            except Exception as e:
+                nested_transaction.rollback()
+                logger.error(f"Error during consistency check transaction: {e}", exc_info=True)
+                stats["errors"] += 1
+                raise
+                
+        # Commit the main transaction after the nested one completes
+        db.commit()
+        
+        if stats["fixed_issues"] > 0:
+            logger.info(f"Database consistency check fixed {stats['fixed_issues']} issues")
+        else:
+            logger.info("Database consistency check completed, no issues found")
+            
+        return stats
+        
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Fatal error in database consistency check: {e}", exc_info=True)
+        stats["errors"] += 1
+        return stats
 
 
 def _map_llm_status_to_notification_status(
@@ -357,27 +476,95 @@ def update_notification(
 
 
 def delete_notification(db: Session, notification_id: int) -> bool:
-    """Deletes a notification and its related data."""
-    notification = (
-        db.query(Notification).filter(Notification.id == notification_id).first()
-    )
-    if not notification:
-        logger.warning(
-            f"Notification with ID {notification_id} not found for deletion."
-        )
-        return False
+    """Deletes a notification and all its related data including LLMData, RawEmail, and impacts.
+    
+    This function implements proper transaction management to ensure data consistency.
+    """
+    # Begin a nested transaction to ensure atomicity
+    transaction = db.begin_nested()
     try:
-        db.query(NotificationImpact).filter(
+        # Check if the notification is referenced in any DowntimeEvent records
+        # as either start_notification or end_notification
+        referenced_as_start = db.query(DowntimeEvent).filter(
+            DowntimeEvent.start_notification_id == notification_id
+        ).all()
+        
+        referenced_as_end = db.query(DowntimeEvent).filter(
+            DowntimeEvent.end_notification_id == notification_id
+        ).all()
+        
+        if referenced_as_start or referenced_as_end:
+            # If the notification is referenced, we can't delete it directly
+            logger.warning(
+                f"Notification ID {notification_id} is referenced by {len(referenced_as_start)} downtime events as start notification "
+                f"and {len(referenced_as_end)} downtime events as end notification. Cannot delete."
+            )
+            transaction.rollback()
+            return False
+        
+        # First load the notification with all related data
+        notification = (
+            db.query(Notification)
+            .filter(Notification.id == notification_id)
+            .options(
+                joinedload(Notification.llm_data),
+                joinedload(Notification.raw_email_data)
+            )
+            .first()
+        )
+        
+        if not notification:
+            logger.warning(
+                f"Notification with ID {notification_id} not found for deletion. Database state may be inconsistent."
+            )
+            return False
+        
+        # Log detailed info about what we found
+        logger.info(
+            f"Found notification ID {notification_id} with status={notification.status.value if notification.status else 'None'}, " 
+            f"has_llm_data={notification.llm_data is not None}, " 
+            f"has_raw_email_data={notification.raw_email_data is not None}"
+        )
+            
+        # Get IDs of related records before deletion for logging
+        llm_data_id = notification.llm_data.id if notification.llm_data else None
+        raw_email_id = notification.raw_email_data.id if notification.raw_email_data else None
+        
+        # First delete impacts (child records)
+        impact_count = db.query(NotificationImpact).filter(
             NotificationImpact.notification_id == notification_id
-        ).delete()
+        ).delete(synchronize_session=False)
+        logger.info(f"Deleted {impact_count} impact records for notification ID {notification_id}")
+        
+        # Delete the notification (this should cascade delete llm_data and raw_email if cascade is set up)
+        # But we'll handle it explicitly to be sure
         db.delete(notification)
+        
+        # If cascade isn't working for some reason, explicitly delete related records
+        if llm_data_id:
+            llm_data = db.query(LLMData).filter(LLMData.id == llm_data_id).first()
+            if llm_data:
+                db.delete(llm_data)
+                logger.info(f"Explicitly deleted LLMData ID {llm_data_id}")
+        
+        if raw_email_id:
+            raw_email = db.query(RawEmail).filter(RawEmail.id == raw_email_id).first()
+            if raw_email:
+                db.delete(raw_email)
+                logger.info(f"Explicitly deleted RawEmail ID {raw_email_id}")
+        
+        # Commit the transaction
+        transaction.commit()
         db.commit()
-        logger.info(f"Successfully deleted notification ID {notification_id}.")
+        logger.info(f"Successfully deleted notification ID {notification_id} and all related records.")
         return True
+        
     except Exception as e:
+        # Roll back in case of any error
+        transaction.rollback()
         db.rollback()
         logger.error(
-            f"Error deleting notification ID {notification_id}: {e}",
+            f"Error deleting notification ID {notification_id}: {str(e)}",
             exc_info=True,
         )
         return False

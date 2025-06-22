@@ -286,14 +286,75 @@ def update_notification_endpoint(notification_id: int):
 
 @app.route("/api/v1/notifications/<int:notification_id>", methods=["DELETE"])
 def delete_notification_api(notification_id: int):
-    success = crud.delete_notification(g.db, notification_id)
-    if not success:
+    # First verify the notification exists before attempting to delete
+    notification = None
+    try:
+        notification = g.db.query(Notification).filter(Notification.id == notification_id).first()
+    except Exception as e:
+        logger.error(f"Error querying notification {notification_id} before deletion: {e}", exc_info=True)
         return (
-            jsonify({"error": f"Notification with ID {notification_id} not found"}),
+            jsonify({"error": f"Database error while checking notification {notification_id}", "details": str(e)}),
+            500,
+        )
+        
+    if not notification:
+        # Log more info about the request context for debugging
+        logger.warning(
+            f"DELETE request for non-existent notification ID {notification_id}. "
+            f"Request path: {request.path}, IP: {request.remote_addr}, "
+            f"User-Agent: {request.headers.get('User-Agent')}"
+        )
+        return (
+            jsonify({
+                "error": f"Notification with ID {notification_id} not found",
+                "details": "The notification may have been deleted already or never existed"
+            }),
             404,
         )
+    
+    # Check if this notification is used in any downtime events before attempting to delete
+    referenced_as_start = g.db.query(DowntimeEvent).filter(
+        DowntimeEvent.start_notification_id == notification_id
+    ).count()
+    
+    referenced_as_end = g.db.query(DowntimeEvent).filter(
+        DowntimeEvent.end_notification_id == notification_id
+    ).count()
+    
+    if referenced_as_start > 0 or referenced_as_end > 0:
+        msg = f"Notification ID {notification_id} cannot be deleted because it is referenced by "
+        if referenced_as_start > 0:
+            msg += f"{referenced_as_start} downtime events as the start notification"
+        if referenced_as_end > 0:
+            if referenced_as_start > 0:
+                msg += " and "
+            msg += f"{referenced_as_end} downtime events as the end notification"
+        logger.warning(msg)
+        return (
+            jsonify({
+                "error": f"Cannot delete notification {notification_id}",
+                "details": msg,
+                "referenced_by_start_events": referenced_as_start,
+                "referenced_by_end_events": referenced_as_end
+            }),
+            409,  # Conflict status code
+        )
+    
+    # If we get here, notification exists and is not referenced, try to delete it
+    success = crud.delete_notification(g.db, notification_id)
+    if not success:
+        # This is unexpected since we verified existence and no references
+        logger.error(f"Failed to delete notification {notification_id} for unknown reason")
+        return (
+            jsonify({
+                "error": f"Failed to delete notification {notification_id}",
+                "details": "See server logs for details"
+            }),
+            500,
+        )
+    
     return (
-        jsonify({"message": f"Notification {notification_id} deleted"}),
+        jsonify({"message": f"Notification {notification_id} deleted successfully"}),
         200,
     )
 
@@ -1267,6 +1328,21 @@ def main_email_processing_workflow():
     logger.info("NoticeHub main email processing workflow finished iteration.")
 
 
+# --- Database consistency check API ---
+@app.route("/api/v1/admin/db-consistency-check", methods=["POST"])
+def trigger_db_consistency_check():
+    """API endpoint to manually trigger a database consistency check.
+    
+    This endpoint requires authentication in a production environment.
+    """
+    try:
+        stats = crud.check_and_fix_data_consistency(g.db)
+        return jsonify({"message": "Database consistency check completed", "stats": stats}), 200
+    except Exception as e:
+        logger.error(f"Error running database consistency check: {e}", exc_info=True)
+        return jsonify({"error": "Failed to run database consistency check", "details": str(e)}), 500
+
+
 # --- Background Thread for Email Processing ---
 def run_email_processor_periodically():
     while True:
@@ -1280,6 +1356,35 @@ def run_email_processor_periodically():
             f"Email processing iteration complete. Waiting {config.settings.email_check_interval_seconds}s."
         )
         time.sleep(config.settings.email_check_interval_seconds)
+
+
+# --- Background Thread for Database Consistency Check ---
+def run_db_consistency_check_periodically():
+    """Run database consistency checks periodically to fix inconsistencies."""
+    # Wait a bit on startup to let other processes initialize
+    time.sleep(60)  
+    
+    # Run every hour by default, or use configuration if available
+    consistency_check_interval = getattr(config.settings, 'db_consistency_check_interval_seconds', 3600)
+    
+    logger.info(f"Database consistency checker started, will run every {consistency_check_interval} seconds")
+    
+    while True:
+        try:
+            logger.info("Running scheduled database consistency check")
+            db_session = get_db_session()
+            try:
+                stats = crud.check_and_fix_data_consistency(db_session)
+                if stats["fixed_issues"] > 0:
+                    logger.info(f"Scheduled consistency check fixed {stats['fixed_issues']} issues")
+            finally:
+                db_session.close()
+        except Exception as e:
+            logger.error(f"Error in scheduled database consistency check: {e}", exc_info=True)
+        
+        # Sleep until next check
+        logger.info(f"Next database consistency check in {consistency_check_interval} seconds")
+        time.sleep(consistency_check_interval)
 
 
 # --- Application Initialization ---
@@ -1307,6 +1412,12 @@ if __name__ == "__main__":
             target=run_email_processor_periodically, daemon=True
         )
         email_thread.start()
+        
+        logger.info("Starting database consistency checker background thread...")
+        db_check_thread = threading.Thread(
+            target=run_db_consistency_check_periodically, daemon=True
+        )
+        db_check_thread.start()
 
         logger.info(f"Starting Flask API server on port 5001...")
         app.run(host="0.0.0.0", port=5001, debug=config.settings.debug_mode)
