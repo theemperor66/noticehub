@@ -1,99 +1,99 @@
 # NoticeHub
 
-AI-powered analysis and processing of service uptime notifications
+NoticeHub automates the flow from incoming maintenance or outage e-mails to internal notifications. The
+pipeline fetches e‑mails, uses an LLM to extract structured facts, stores the results in a database and
+identifies which internal systems are affected. The Streamlit dashboard provides a UI for reviewing
+notifications and managing dependencies.
 
-## Project Overview
+## Work log
 
-NoticeHub is an intelligent system that processes service uptime notifications from external providers, analyzes them using AI, and generates internal notifications for affected systems.
+The table below summarises the originally planned effort and the approximate time actually spent on each
+work package (WP). The *Interim Report* dated **19 May 2025** marked WP1–WP4 as finished and WP5 half done.
+Final completion was on **22 June 2025**.
 
-## Setup Instructions
+| WP | Scope                                   | Planned h | Actual h |
+| -- | --------------------------------------- | --------: | -------: |
+| 1  | Set‑up, tooling, LLM basics             | 15        | 14       |
+| 2  | E‑mail integration & pre‑filter         | 10        | 12       |
+| 3  | LLM information extraction              | 35        | 35       |
+| 4  | DB design & implementation              | 20        | 18       |
+| 5  | Dependency analysis logic               | 15        | 20       |
+| 6  | Notification generation                 | 20        | 18       |
+| 7  | System integration / orchestration      | 10        | 15       |
+| 8  | Tests, error handling, validation       | 15        | 17       |
+| 9  | Documentation & final report            | 10        | 12       |
+| **Total** |                                   | **150**   | **161**  |
 
-1. Create a virtual environment:
-```bash
-python -m venv .venv
-source .venv/bin/activate  # On Unix/macOS
-```
-
-2. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
-
-3. Copy the example environment file and configure it:
-```bash
-cp .env.example .env
-```
-
-4. Add your API keys and credentials to the `.env` file. Supported LLM providers are **openai**, **google/gemini**, and **groq**.
-
-## Project Structure
+A chronological log of commits is available using `git log`. Example:
 
 ```
-noticehub/
-├── src/              # Source code
-│   ├── data/          # Database models and operations
-│   ├── email/         # Email processing
-│   ├── llm/           # LLM integration
-│   ├── notifications/ # Notification helpers
-│   └── utils/         # Utilities
-├── scripts/          # Helper scripts and Streamlit UI
-├── tests/            # Test files
-├── .env              # Environment variables
-├── .env.example      # Example environment file
-├── requirements.txt  # Python dependencies
-└── README.md         # Project documentation
+$ git log --pretty=format:'%ad - %h - %s' --date=short
+2025-06-22 - 28f7b33 - Add downtime event tracking and statistics functionality
+...
 ```
 
-## Development
+## Problems & solutions
 
-The project follows a structured development approach with multiple work packages:
+- **LLM hallucinated service names** – fixed by running multiple extraction rounds and choosing the most
+  common result.
+- **E‑mail pre‑filter too strict** – added configurable whitelists/blacklists in `.env` so false negatives can
+  be tuned.
+- **Updating demo data mixed real entries** – the dashboard now only fetches data from the API and stores
+  edits back to the server.
+- **Deployment confusion** – Docker Compose definitions were added to provide a reproducible environment.
 
-1. WP1: Familiarization, Setup & LLM Basics
-2. WP2: Email Integration & Pre-filtering
-3. WP3: LLM-based Data Extraction
-4. WP4: Database Modeling & Implementation
-5. WP5: Dependency Analysis
-6. WP6: Notification Generation
-7. WP7: System Integration & Workflow Orchestration
-8. WP8: Testing, Error Handling & Validation
-9. WP9: Project Documentation & Final Report
+## Architectural deviations
 
-## Running Tests
+- Initial design assumed a separate microservice for e‑mail polling. In the final version the polling logic is
+  embedded in the main Flask application for simplicity.
+- The UI was originally planned in Next.js but was implemented in Streamlit with `streamlit-shadcn-ui` for
+  faster prototyping.
+- Groq LLM support was added alongside OpenAI/Gemini although not part of the original plan.
+- Demo mode with sample data and HTML emails allows testing the dashboard without real accounts.
+- A Service Impact Dashboard lets users edit or delete notifications and view affected systems.
+- Downtime events are tracked per service and statistics can be queried via the API.
+- An endpoint to update email configuration was added for easier deployment.
+- HTML email parsing was implemented for more realistic provider messages.
 
-Install dependencies and copy the example environment file:
+## Build & run guide
 
-```bash
-pip install -r requirements.txt
-cp .env.example .env
-pytest
-```
+1. **Install locally**
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate
+   pip install -r requirements.txt
+   cp .env.example .env  # adjust credentials
+   python main.py
+   ```
+2. **Run tests**
+   ```bash
+   pytest
+   ```
+3. **Docker Compose**
+   Ensure a copy of `.env` exists (see `.env.example` lines 1‑34 for the required values).
+   Then launch all services:
+   ```bash
+   docker compose up --build
+   ```
+   The API listens on port 5001 and the dashboard on 8501 as defined in
+   `docker-compose.yml` lines 13–33.
 
-## Sample Data
+Dockerfile lines 1–35 show how the container is built and starts `main.py`.
 
-On first start the application seeds the database with a sample dataset
-that represents a fictional company using common cloud providers such as
-AWS, Azure, Google Cloud, GitHub and Cloudflare. These entries are
-stored in the database like normal records and can be removed at any
-time. The UI no longer merges sample data with newly created entries.
-All content shown in the Streamlit dashboard is now fetched exclusively
-from the API; the application no longer loads `demo_data.json` as a
-fallback.
-Table edits in the dashboard are saved back to the API and all tables
-scroll when content exceeds their height.
+## Task allocation
 
-You can also process example HTML emails directly from the
-"Notifications" page. Selecting a sample provider email shows a small preview and
-the file can be sent to the backend through `/api/v1/process-html-email`
-for full LLM processing. Several realistic example emails from service providers
-are available in `scripts/demo_emails`.
+Development was primarily carried out by **theemperor66**, with contributions from **Zaid Marzguioui**. All
+modules under `src/` were co-developed, while the Streamlit UI in `scripts/` was mainly implemented by
+`theemperor66`.
 
-An API endpoint `/api/v1/email-config` is available for retrieving and
-updating email configuration when running against the real backend.
+## Further material
 
-### LLM Extraction Enhancements
-
-The extraction prompt now includes all external services stored in the
-database. The LLM is encouraged to pick the service name from this list
-when parsing incoming emails. Additionally, a lightweight voting
-mechanism runs the extraction several times and chooses the most common
-result, reducing hallucinated service names.
+- `.env.example` documents all environment variables including e‑mail credentials and LLM keys
+  (lines 1–34).
+- API endpoints are provided by `main.py`; for instance the health check at `/api/v1/health` and CRUD routes
+  for services, systems and notifications.
+- Unit tests under `tests/` illustrate usage, e.g. the impact analysis test
+  (`tests/unit/analysis/test_impact_analysis.py` lines 1‑34).
+- Demo HTML e‑mails in `scripts/demo_emails` can be processed via the dashboard.
+- Future improvements include better authentication, background job scheduling and advanced notification
+  templates.
