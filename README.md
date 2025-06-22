@@ -70,11 +70,11 @@ pytest
 
 ## Sample Data
 
-On first start the application seeds the database with a demo dataset
+On first start the application seeds the database with a sample dataset
 that represents a fictional company using common cloud providers such as
 AWS, Azure, Google Cloud, GitHub and Cloudflare. These entries are
 stored in the database like normal records and can be removed at any
-time. The UI no longer merges demo data with newly created entries.
+time. The UI no longer merges sample data with newly created entries.
 All content shown in the Streamlit dashboard is now fetched exclusively
 from the API; the application no longer loads `demo_data.json` as a
 fallback.
@@ -82,10 +82,10 @@ Table edits in the dashboard are saved back to the API and all tables
 scroll when content exceeds their height.
 
 You can also process example HTML emails directly from the
-"Notifications" page. Selecting a demo email shows a small preview and
+"Notifications" page. Selecting a sample provider email shows a small preview and
 the file can be sent to the backend through `/api/v1/process-html-email`
-for full LLM processing. Several sample provider emails are available in
-`scripts/demo_emails`.
+for full LLM processing. Several realistic example emails from service providers
+are available in `scripts/demo_emails`.
 
 An API endpoint `/api/v1/email-config` is available for retrieving and
 updating email configuration when running against the real backend.

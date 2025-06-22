@@ -414,14 +414,14 @@ elif page == "Notifications":
         )
     st.dataframe(rows, use_container_width=True, height=400)
 
-    with st.expander("Add Notification from Demo Email"):
+    with st.expander("Create Notification from Sample Email"):
         demo_dir = os.path.join(os.path.dirname(__file__), "demo_emails")
         try:
             files = [f for f in os.listdir(demo_dir) if f.endswith(".html")]
         except Exception:
             files = []
         if files:
-            selected = st.selectbox("Select demo email", files, key="demo_email")
+            selected = st.selectbox("Select sample email", files, key="demo_email")
             email_path = os.path.join(demo_dir, selected)
             html_preview = ""
             try:
@@ -439,7 +439,7 @@ elif page == "Notifications":
                 payload = {
                     "subject": subject,
                     "html": html_preview,
-                    "sender": "demo@provider.com",
+                    "sender": "noreply@provider.com",
                 }
                 resp = requests.post(
                     f"{API_BASE}/api/v1/process-html-email", json=payload
@@ -450,7 +450,7 @@ elif page == "Notifications":
                 else:
                     st.error(f"Failed to process email: {resp.text}")
         else:
-            st.info("No demo email files found.")
+            st.info("No sample email files found.")
 
 elif page == "Services":
     st.subheader("External Services")
