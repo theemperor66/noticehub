@@ -1,5 +1,7 @@
 from pydantic import BaseModel, ConfigDict
 from typing import Optional, List
+from datetime import datetime
+from .models import SeverityEnum
 
 # --- ExternalService Schemas ---
 
@@ -105,3 +107,30 @@ class DependencySchema(DependencyInDBBase):
 class DependencyList(BaseModel):
     dependencies: List[DependencySchema]
     total_count: int
+
+
+# --- Downtime Event Schemas ---
+
+
+class DowntimeEventSchema(BaseModel):
+    id: int
+    service_id: int
+    service_name: Optional[str] = None
+    start_notification_id: int
+    end_notification_id: Optional[int] = None
+    start_time: datetime
+    end_time: Optional[datetime] = None
+    severity: Optional[SeverityEnum] = None
+    summary: Optional[str] = None
+    duration_minutes: Optional[int] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class DowntimeStatsSchema(BaseModel):
+    service_id: int
+    service_name: Optional[str] = None
+    average_minutes: float
+    event_count: int
+    ongoing_count: int = 0
+    has_ongoing: bool = False

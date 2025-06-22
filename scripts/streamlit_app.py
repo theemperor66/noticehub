@@ -6,6 +6,8 @@ import pandas as pd
 import requests
 import streamlit as st
 import streamlit_shadcn_ui as ui
+import plotly.express as px
+import plotly.graph_objects as go
 
 # Valid notification status values that match NotificationStatusEnum
 VALID_NOTIFICATION_STATUSES = [
@@ -100,7 +102,7 @@ def create_item(endpoint: str, payload: Dict[str, Any]):
 
 page = st.sidebar.radio(
     "Navigation",
-    ["Dashboard", "Notifications", "Services", "Email Settings"],
+    ["Dashboard", "Notifications", "Services", "Downtime", "Email Settings"],
 )
 
 if page == "Dashboard":
@@ -537,7 +539,223 @@ elif page == "Services":
             if isys and esvc:
                 dot += f'"{isys}" -> "{esvc}";\n'
         dot += "}"
-        st.graphviz_chart(dot)
+    st.graphviz_chart(dot)
+
+elif page == "Downtime":
+    st.header("Service Downtime Statistics")
+    
+    # Fetch downtime statistics
+    stats = fetch_json("/downtime-stats")
+    
+    if stats and len(stats) > 0:
+        df_stats = pd.DataFrame(stats)
+        
+        # Fix field name inconsistencies - normalize column names
+        if 'avg_downtime_minutes' in df_stats.columns and 'average_minutes' not in df_stats.columns:
+            df_stats['average_minutes'] = df_stats['avg_downtime_minutes']
+        
+        # Check for ongoing events
+        has_ongoing_events = df_stats['has_ongoing'].any() if 'has_ongoing' in df_stats.columns else False
+        total_ongoing = df_stats['ongoing_count'].sum() if 'ongoing_count' in df_stats.columns else 0
+        
+        # Alert for ongoing issues if any exist
+        if has_ongoing_events:
+            st.warning(f"⚠️ There are currently {total_ongoing} ongoing service issue(s)")
+        
+        # Summary metrics in columns
+        col1, col2, col3 = st.columns(3)
+        
+        # Determine which column to use for average downtime
+        avg_col = 'average_minutes' if 'average_minutes' in df_stats.columns else 'avg_downtime_minutes'
+        
+        with col1:
+            if not df_stats.empty and avg_col in df_stats.columns:
+                avg_downtime = df_stats[avg_col].mean()
+                # Format nicely with 1 decimal place
+                st.metric("Average Downtime", f"{avg_downtime:.1f} min")
+            else:
+                st.metric("Average Downtime", "No data")
+                
+        with col2:
+            if not df_stats.empty and 'event_count' in df_stats.columns:
+                total_events = df_stats['event_count'].sum()
+                st.metric("Total Downtime Events", f"{int(total_events)}")
+            else:
+                st.metric("Total Downtime Events", "No data")
+                
+        with col3:
+            if not df_stats.empty and 'service_name' in df_stats.columns and avg_col in df_stats.columns:
+                # Check if there are ongoing issues to consider
+                if 'has_ongoing' in df_stats.columns and df_stats['has_ongoing'].any():
+                    # First priority: services with ongoing issues
+                    # If multiple services have ongoing issues, pick the one with highest average downtime
+                    ongoing_services = df_stats[df_stats['has_ongoing'] == True]
+                    if not ongoing_services.empty:
+                        most_affected = ongoing_services.loc[ongoing_services[avg_col].idxmax()]['service_name']
+                        # Add a visual indicator that this service has ongoing issues
+                        st.metric("Most Affected Service", f"⚠️ {most_affected} (ongoing)")
+                    else:
+                        # Fallback to highest average if has_ongoing exists but no services are marked
+                        most_affected = df_stats.loc[df_stats[avg_col].idxmax()]['service_name']
+                        st.metric("Most Affected Service", most_affected)
+                else:
+                    # If no ongoing data available, use the original logic based on average downtime
+                    most_affected = df_stats.loc[df_stats[avg_col].idxmax()]['service_name']
+                    st.metric("Most Affected Service", most_affected)
+            else:
+                st.metric("Most Affected Service", "No data")
+        
+        # Ongoing events section (if any)
+        if has_ongoing_events:
+            st.subheader("Ongoing Service Issues")
+            ongoing_df = df_stats[df_stats['has_ongoing'] == True].copy() if 'has_ongoing' in df_stats.columns else pd.DataFrame()
+            if not ongoing_df.empty:
+                # Create a table showing ongoing events
+                ongoing_table = ongoing_df[['service_name', 'ongoing_count']].rename(
+                    columns={
+                        'service_name': 'Service', 
+                        'ongoing_count': 'Ongoing Issues'
+                    }
+                )
+                st.dataframe(ongoing_table, use_container_width=True, hide_index=True)
+                
+                # Highlight ongoing issues in red
+                for service in ongoing_df['service_name'].tolist():
+                    st.markdown(f"<span style='color:red'>⚠️ {service} has ongoing issues</span>", unsafe_allow_html=True)
+        
+        # Visualization section
+        if not df_stats.empty and 'service_name' in df_stats.columns:
+            # Determine the column to use for average downtime
+            avg_col = 'average_minutes' if 'average_minutes' in df_stats.columns else 'avg_downtime_minutes'
+            
+            # Sort data by average downtime for better visualization
+            df_stats = df_stats.sort_values(by=avg_col, ascending=False)
+            
+            # Create a bar chart of average downtime by service
+            st.subheader("Average Downtime by Service")
+            
+            # Add color for services with ongoing issues
+            if 'has_ongoing' in df_stats.columns:
+                df_stats['Status'] = df_stats.apply(
+                    lambda x: 'Ongoing Issues' if x['has_ongoing'] else 'Resolved', 
+                    axis=1
+                )
+                color_discrete_map = {'Ongoing Issues': 'red', 'Resolved': 'blue'}
+            else:
+                df_stats['Status'] = 'Resolved'
+                color_discrete_map = {'Resolved': 'blue'}
+                
+            # Add hover data if available
+            hover_data = ['event_count']
+            if 'ongoing_count' in df_stats.columns:
+                hover_data.append('ongoing_count')
+            
+            # Use the appropriate column name for average downtime
+            y_column = 'average_minutes' if 'average_minutes' in df_stats.columns else 'avg_downtime_minutes'
+            
+            fig = px.bar(
+                df_stats, 
+                x='service_name', 
+                y=y_column, 
+                color='Status',
+                color_discrete_map=color_discrete_map,
+                labels={'service_name': 'Service', y_column: 'Average Downtime (min)'},
+                title='',
+                hover_data=hover_data,
+                height=400
+            )
+            fig.update_layout(
+                xaxis_title="Service",
+                yaxis_title="Average Downtime (minutes)",
+                legend_title="Status"
+            )
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Event count visualization
+            st.subheader("Downtime Event Count by Service")
+            
+            # Create a better pie chart that shows actual proportions
+            # Create direct proportional visualization using raw count values and go.Pie
+            # This is more explicit than using px.pie and gives us full control
+            event_counts = df_stats['event_count'].astype(int).tolist()
+            service_names = df_stats['service_name'].tolist()
+            
+            # Calculate percentages manually for verification
+            total_count = sum(event_counts)
+            percentages = [count/total_count*100 for count in event_counts] if total_count > 0 else [0] * len(event_counts)
+            
+            # Create custom hover text with all the details we want
+            hover_texts = []
+            for i, service in enumerate(service_names):
+                if 'ongoing_count' in df_stats.columns:
+                    hover_texts.append(f"<b>{service}</b><br>" + 
+                                      f"Count: {event_counts[i]}<br>" + 
+                                      f"Percentage: {percentages[i]:.1f}%<br>" +
+                                      f"Ongoing: {df_stats['ongoing_count'].iloc[i]}<br>" +
+                                      f"Avg Duration: {df_stats['average_minutes'].iloc[i]:.1f} min")
+                else:
+                    hover_texts.append(f"<b>{service}</b><br>" + 
+                                      f"Count: {event_counts[i]}<br>" + 
+                                      f"Percentage: {percentages[i]:.1f}%<br>" +
+                                      f"Avg Duration: {df_stats['average_minutes'].iloc[i]:.1f} min")
+            
+            # Create pie chart with go.Pie for maximum control
+            fig2 = go.Figure(data=[go.Pie(
+                labels=service_names,
+                values=event_counts, 
+                hole=0.4,
+                hovertext=hover_texts,
+                hoverinfo='text',
+                textinfo='value+percent+label',
+                textposition='inside',
+                texttemplate='%{percent:.1f}% (%{value})<br>%{label}'
+            )])
+            
+            fig2.update_layout(
+                title='',
+                legend=dict(orientation='h', y=-0.2)
+            )
+            st.plotly_chart(fig2, use_container_width=True)
+            
+            # Comprehensive data table with statistics
+            st.subheader("Downtime Statistics Summary")
+            
+            # Choose columns based on whether we have ongoing data
+            # First determine the correct column name for average downtime
+            avg_col = 'average_minutes' if 'average_minutes' in df_stats.columns else 'avg_downtime_minutes'
+            
+            if 'ongoing_count' in df_stats.columns:
+                display_columns = ['service_name', avg_col, 'event_count', 'ongoing_count']
+                rename_map = {
+                    'service_name': 'Service', 
+                    avg_col: 'Avg. Downtime (min)', 
+                    'event_count': 'Total Events',
+                    'ongoing_count': 'Ongoing Issues'
+                }
+            else:
+                display_columns = ['service_name', avg_col, 'event_count']
+                rename_map = {
+                    'service_name': 'Service', 
+                    avg_col: 'Avg. Downtime (min)', 
+                    'event_count': 'Event Count'
+                }
+                
+            st.dataframe(
+                df_stats[display_columns].rename(columns=rename_map),
+                use_container_width=True,
+                hide_index=True
+            )
+    else:
+        st.info("No downtime statistics available. This could be because there are no recorded downtime events or due to data migration issues.")
+        
+    # Add option to view raw data if needed, but hidden by default
+    with st.expander("Advanced: View Raw Event Data", expanded=False):
+        st.caption("This shows the raw downtime event data. Most users won't need this information.")
+        events = fetch_json("/downtime-events")
+        if events:
+            st.dataframe(events, use_container_width=True, height=300)
+        else:
+            st.info("No raw event data available.")
 
 elif page == "Email Settings":
     st.subheader("Email Server Configuration")

@@ -18,6 +18,7 @@ from src.data import crud
 from src.data.models import (
     Dependency,
     ExternalService,
+    DowntimeEvent,
     InternalSystem,
     LLMData,
     Notification,
@@ -39,6 +40,8 @@ from src.data.schemas import (
     ExternalServiceList,
     ExternalServiceSchema,
     ExternalServiceUpdate,
+    DowntimeEventSchema,
+    DowntimeStatsSchema,
     InternalSystemCreate,
     InternalSystemList,
     InternalSystemSchema,
@@ -177,6 +180,21 @@ def serialize_notification(notification: Notification) -> Dict[str, Any]:
         # "affected_services": [service.name for service in notification.affected_services],
         # "dependencies": [dep.name for dep in notification.dependencies],
         # "internal_systems": [sys.name for sys in notification.internal_systems]
+    }
+
+
+def serialize_downtime_event(event: DowntimeEvent) -> Dict[str, Any]:
+    return {
+        "id": event.id,
+        "service_id": event.external_service_id,
+        "service_name": event.external_service.service_name if event.external_service else None,
+        "start_notification_id": event.start_notification_id,
+        "end_notification_id": event.end_notification_id,
+        "start_time": serialize_datetime(event.start_time),
+        "end_time": serialize_datetime(event.end_time),
+        "severity": serialize_enum(event.severity),
+        "summary": event.summary,
+        "duration_minutes": event.duration_minutes,
     }
 
 
@@ -708,6 +726,23 @@ def api_delete_dependency(dependency_id: int):
         ),
         200,
     )
+
+
+@app.route("/downtime-events", methods=["GET"])
+def api_get_downtime_events():
+    service_id = request.args.get("service_id", type=int)
+    skip = request.args.get("skip", 0, type=int)
+    limit = request.args.get("limit", 100, type=int)
+    events = crud.get_downtime_events(
+        g.db, external_service_id=service_id, skip=skip, limit=limit
+    )
+    return jsonify([serialize_downtime_event(e) for e in events])
+
+
+@app.route("/downtime-stats", methods=["GET"])
+def api_get_downtime_stats():
+    stats = crud.get_average_downtime_by_service(g.db)
+    return jsonify([DowntimeStatsSchema.model_validate(s).model_dump() for s in stats])
 
 
 # --- Email Configuration API Endpoints ---

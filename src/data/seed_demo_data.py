@@ -1,22 +1,23 @@
 import json
 import os
 import uuid
-from datetime import datetime
+import random
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from dateutil import parser as date_parser
 from sqlalchemy.orm import Session
 
 from src.config import PROJECT_ROOT
-from src.utils.logger import logger
 from src.data import crud
 from src.data.models import (
     Notification,
     NotificationStatusEnum,
-    ProcessingStatusEnum,
     NotificationTypeEnum,
+    ProcessingStatusEnum,
     SeverityEnum,
 )
+from src.utils.logger import logger
 
 
 def _parse_notification_type(type_str: Optional[str]) -> NotificationTypeEnum:
@@ -113,11 +114,10 @@ def seed_demo_data(db: Session, json_path: Optional[str] = None) -> None:
             dependency_description=dep.get("dependency_description"),
         )
 
+    created_notifications = []
     for notif in data.get("notifications", []):
         created = notif.get("created_at")
-        created_dt = (
-            date_parser.parse(created) if created else datetime.utcnow()
-        )
+        created_dt = date_parser.parse(created) if created else datetime.utcnow()
         n = crud.create_notification(
             db,
             subject=notif.get("title", "Demo Notification"),
@@ -135,9 +135,7 @@ def seed_demo_data(db: Session, json_path: Optional[str] = None) -> None:
             extracted_service_name=llm.get("extracted_service_name"),
             event_start_time=None,
             event_end_time=None,
-            notification_type=_parse_notification_type(
-                llm.get("notification_type")
-            ),
+            notification_type=_parse_notification_type(llm.get("notification_type")),
             severity=_parse_severity(llm.get("severity")),
             llm_summary=llm.get("llm_summary"),
             raw_llm_response=None,
@@ -157,5 +155,118 @@ def seed_demo_data(db: Session, json_path: Optional[str] = None) -> None:
         db.commit()
         crud.analyze_notification_impacts(db, n.id, llm.get("extracted_service_name"))
         db.refresh(n)
+        created_notifications.append((n, llm))
 
-
+    # Instead of using the notification data directly, let's create a realistic
+    # history of downtime events based on current time
+    
+    # Generate realistic downtime history for each service
+    # Start with events from the last 30 days
+    now = datetime.now(timezone.utc)
+    services = list(svc_map.values())  # All available services
+    
+    # Create a realistic downtime history pattern for each service
+    for service in services:
+        # Determine how many events to create for this service (1-4)
+        event_count = random.randint(1, 4)
+        logger.info(f"Creating {event_count} downtime events for {service.service_name}")
+        
+        for i in range(event_count):
+            # Choose a notification to associate with this event
+            n, llm = random.choice(created_notifications)
+            
+            # Generate a start time within the last 30 days
+            days_ago = random.randint(1, 30)
+            hours_ago = random.randint(1, 23)
+            minutes_ago = random.randint(1, 59)
+            
+            # Create start time: between 1-30 days ago
+            start_time = now - timedelta(days=days_ago, hours=hours_ago, minutes=minutes_ago)
+            
+            # Most events should be resolved, some should be ongoing
+            is_resolved = random.random() > 0.2  # 80% are resolved
+            
+            # For resolved events, create realistic downtime duration
+            if is_resolved:
+                # Most issues resolve within a few hours
+                # Distribution: 40% < 30min, 30% 30min-2h, 20% 2h-6h, 10% 6h-24h
+                duration_probability = random.random()
+                
+                if duration_probability < 0.4:
+                    # Short outage: 5-30 minutes
+                    duration_minutes = random.randint(5, 30)
+                elif duration_probability < 0.7:
+                    # Medium outage: 30min-2h
+                    duration_minutes = random.randint(30, 120)
+                elif duration_probability < 0.9:
+                    # Long outage: 2h-6h
+                    duration_minutes = random.randint(120, 360)
+                else:
+                    # Extended outage: 6h-24h
+                    duration_minutes = random.randint(360, 1440)
+                
+                end_time = start_time + timedelta(minutes=duration_minutes)
+            else:
+                # Ongoing event - no end time
+                end_time = None
+            
+            # Pick a reasonable severity based on duration
+            if is_resolved and duration_minutes < 30:
+                severity = SeverityEnum.LOW
+            elif is_resolved and duration_minutes < 120:
+                severity = SeverityEnum.MEDIUM
+            else:
+                severity = SeverityEnum.HIGH
+                
+            # Create a realistic summary based on the service
+            summaries = [
+                f"Increased latency observed on {service.service_name}",
+                f"Service degradation affecting {service.service_name}",
+                f"Connectivity issues with {service.service_name}",
+                f"Performance degradation in {service.service_name}",
+                f"Partial outage affecting {service.service_name}",
+                f"{service.service_name} experiencing increased error rates"
+            ]
+            summary = random.choice(summaries)
+            
+            # Create the downtime event
+            event = crud.create_downtime_event(
+                db,
+                external_service_id=service.id,
+                start_notification_id=n.id,
+                start_time=start_time,
+                severity=severity,
+                summary=summary
+            )
+            
+            # Close the event if it's resolved
+            if is_resolved and end_time:
+                crud.close_downtime_event(
+                    db,
+                    event_id=event.id,
+                    end_notification_id=n.id,  # Use same notification for demo
+                    end_time=end_time
+                )
+        
+        # Ensure each service has at least one entry in the stats
+        if event_count == 0:
+            # Create a single short resolved event
+            n, llm = random.choice(created_notifications)
+            start_time = now - timedelta(days=random.randint(1, 10), hours=random.randint(1, 12))
+            end_time = start_time + timedelta(minutes=random.randint(10, 60))  
+            
+            event = crud.create_downtime_event(
+                db,
+                external_service_id=service.id,
+                start_notification_id=n.id,
+                start_time=start_time,
+                severity=SeverityEnum.LOW,
+                summary=f"Minor disruption in {service.service_name}"
+            )
+            
+            crud.close_downtime_event(
+                db,
+                event_id=event.id,
+                end_notification_id=n.id,
+                end_time=end_time
+            )

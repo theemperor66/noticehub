@@ -1,20 +1,20 @@
+import enum
+from datetime import datetime
+from typing import Optional
+
+from sqlalchemy import Boolean, Column, DateTime
+from sqlalchemy import Enum as SQLAlchemyEnum
 from sqlalchemy import (
-    create_engine,
-    Column,
+    ForeignKey,
+    Index,
     Integer,
     String,
-    DateTime,
     Text,
-    ForeignKey,
-    Enum as SQLAlchemyEnum,
-    Index,
     UniqueConstraint,
-    Boolean,
+    create_engine,
 )
-from sqlalchemy.orm import declarative_base, sessionmaker, relationship
+from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 from sqlalchemy.sql import func  # For server_default=func.now()
-from datetime import datetime
-import enum
 
 from src.config import settings
 from src.utils.logger import logger
@@ -271,6 +271,46 @@ class NotificationImpact(Base):
         return f"<NotificationImpact(notification_id={self.notification_id}, internal_system_id={self.internal_system_id})>"
 
 
+class DowntimeEvent(Base):
+    __tablename__ = "downtime_events"
+
+    id = Column(Integer, primary_key=True, index=True)
+    external_service_id = Column(
+        Integer, ForeignKey("external_services.id"), nullable=False, index=True
+    )
+    start_notification_id = Column(
+        Integer, ForeignKey("notifications.id"), nullable=False, index=True
+    )
+    end_notification_id = Column(
+        Integer, ForeignKey("notifications.id"), nullable=True, index=True
+    )
+    start_time = Column(DateTime, nullable=False)
+    end_time = Column(DateTime, nullable=True)
+    severity = Column(
+        SQLAlchemyEnum(SeverityEnum, name="downtime_severity_enum"), nullable=True
+    )
+    summary = Column(Text, nullable=True)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime, server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    external_service = relationship("ExternalService")
+    start_notification = relationship(
+        "Notification", foreign_keys=[start_notification_id]
+    )
+    end_notification = relationship("Notification", foreign_keys=[end_notification_id])
+
+    def __repr__(self):
+        return f"<DowntimeEvent(service_id={self.external_service_id}, start={self.start_time}, end={self.end_time})>"
+
+    @property
+    def duration_minutes(self) -> Optional[int]:
+        if self.start_time and self.end_time:
+            return int((self.end_time - self.start_time).total_seconds() / 60)
+        return None
+
+
 # --- Database Setup --- #
 engine = None
 SessionLocal = None
@@ -345,6 +385,7 @@ if __name__ == "__main__":
             "internal_systems",
             "dependencies",
             "notification_impacts",
+            "downtime_events",
         }
         if expected_tables.issubset(set(table_names)):
             logger.info("All expected tables seem to be created.")
