@@ -15,6 +15,7 @@ from src.data.models import (
     LLMData,
     NotificationTypeEnum,
     SeverityEnum,  # Added Enums
+    DowntimeEvent,
 )
 
 
@@ -432,3 +433,71 @@ def test_delete_notification(db_session: Session, basic_notification_from_email_
 def test_delete_notification_not_found(db_session: Session):
     deleted = crud.delete_notification(db_session, 999999)
     assert deleted is False
+
+
+def test_delete_notification_used_as_end_reopens_event(db_session: Session):
+    svc = crud.create_external_service(
+        db_session, service_name="DelEndSvc", provider="x"
+    )
+    start_notif = crud.create_notification(
+        db=db_session,
+        subject="start",
+        received_at=datetime.now(timezone.utc),
+        original_email_id_str="del_end_start",
+    )
+    event = crud.create_downtime_event(
+        db_session,
+        external_service_id=svc.id,
+        start_notification_id=start_notif.id,
+        start_time=start_notif.raw_email_data.received_at,
+    )
+    end_notif = crud.create_notification(
+        db=db_session,
+        subject="end",
+        received_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        original_email_id_str="del_end_end",
+    )
+    crud.close_downtime_event(
+        db_session, event.id, end_notif.id, end_notif.raw_email_data.received_at
+    )
+
+    deleted = crud.delete_notification(db_session, end_notif.id)
+    assert deleted is True
+
+    updated_event = crud.get_item_by_id(db_session, DowntimeEvent, event.id)
+    assert updated_event.end_notification_id is None
+    assert updated_event.end_time is None
+
+
+def test_delete_notification_used_as_start_deletes_event_and_end(db_session: Session):
+    svc = crud.create_external_service(
+        db_session, service_name="DelStartSvc", provider="x"
+    )
+    start_notif = crud.create_notification(
+        db=db_session,
+        subject="start",
+        received_at=datetime.now(timezone.utc),
+        original_email_id_str="del_start_start",
+    )
+    event = crud.create_downtime_event(
+        db_session,
+        external_service_id=svc.id,
+        start_notification_id=start_notif.id,
+        start_time=start_notif.raw_email_data.received_at,
+    )
+    end_notif = crud.create_notification(
+        db=db_session,
+        subject="end",
+        received_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        original_email_id_str="del_start_end",
+    )
+    crud.close_downtime_event(
+        db_session, event.id, end_notif.id, end_notif.raw_email_data.received_at
+    )
+
+    deleted = crud.delete_notification(db_session, start_notif.id)
+    assert deleted is True
+
+    assert crud.get_notification(db_session, start_notif.id) is None
+    assert crud.get_item_by_id(db_session, DowntimeEvent, event.id) is None
+    assert crud.get_notification(db_session, end_notif.id) is None

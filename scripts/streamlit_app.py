@@ -115,7 +115,8 @@ if page == "Dashboard":
 
     deps = fetch_json("/dependencies")
 
-    status_classes = {
+    # Color classes based on severity
+    severity_classes = {
         "none": "status-green",  # green
         "low": "status-green",
         "medium": "status-yellow",  # yellow
@@ -137,15 +138,21 @@ if page == "Dashboard":
             for n in notifs
             if n.get("llm_data", {}).get("extracted_service_name") == name
         ]
-        # Handle empty list safely
-        open_related = [n for n in related if n.get("status") != "resolved"] if related else []
-        if open_related:
+        # Get all related notifications for this service
+        if related:
             try:
-                latest = sorted(
-                    open_related, key=lambda x: x.get("created_at", ""), reverse=True
-                )[0]
+                # Sort all related notifications by created_at, newest first
+                all_sorted = sorted(
+                    related, key=lambda x: x.get("created_at", ""), reverse=True
+                )
+                # Just use the latest notification regardless of status
+                latest = all_sorted[0]
                 sev = latest.get("llm_data", {}).get("severity", "low")
                 status = latest.get("status", "new")
+                
+                # If the status is resolved, set severity to none (green)
+                if status == "resolved":
+                    sev = "none"
             except (IndexError, KeyError):
                 sev = "none"
                 status = "operational"
@@ -165,7 +172,7 @@ if page == "Dashboard":
     # Add each card to the appropriate column (distributing evenly)
     for idx, info in enumerate(svc_status):
         col_idx = idx % num_cols
-        cls = status_classes.get(info["severity"], "status-green")
+        cls = severity_classes.get(info["severity"], "status-green")
         sev_text = f" ({info['severity']})" if info["severity"] != "none" else ""
         
         with cols[col_idx]:
@@ -216,7 +223,11 @@ if page == "Dashboard":
         # Add each card to the appropriate column (distributing evenly)
         for idx, info in enumerate(sys_status):
             col_idx = idx % num_cols
-            cls = status_classes.get(info["severity"], "status-green")
+            # For resolved status, use green color
+            if info["status"] == "resolved":
+                cls = "status-green"
+            else:
+                cls = severity_classes.get(info["severity"], "status-green")
             sev_text = f" ({info['severity']})" if info["severity"] != "none" else ""
             
             with cols[col_idx]:

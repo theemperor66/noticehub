@@ -207,7 +207,7 @@ def check_and_fix_data_consistency(db: Session) -> dict:
                 for notification in incomplete_notifications:
                     logger.warning(f"Notification ID {notification.id} has missing related records, marking for deletion")
                     # This is a serious inconsistency - delete the notification
-                    delete_notification(db, notification.id)
+                    delete_notification(db, notification.id, internal_call=True)
                     stats["fixed_issues"] += 1
                 
                 # 4. Check for orphaned impacts
@@ -475,32 +475,52 @@ def update_notification(
         return None
 
 
-def delete_notification(db: Session, notification_id: int) -> bool:
-    """Deletes a notification and all its related data including LLMData, RawEmail, and impacts.
-    
-    This function implements proper transaction management to ensure data consistency.
+def delete_notification(
+    db: Session, notification_id: int, *, internal_call: bool = False
+) -> bool:
+    """Deletes a notification along with its related data.
+
+    If the notification is referenced as the start of one or more downtime
+    events, those events are deleted as well. Any end notifications attached to
+    those events will also be removed. When referenced only as the end of events
+    the events are reopened by clearing the end information. Proper transaction
+    management ensures database consistency throughout the process.
     """
-    # Begin a nested transaction to ensure atomicity
-    transaction = db.begin_nested()
+    transaction = None
+    if not internal_call:
+        # Begin a nested transaction to ensure atomicity
+        transaction = db.begin_nested()
     try:
         # Check if the notification is referenced in any DowntimeEvent records
         # as either start_notification or end_notification
         referenced_as_start = db.query(DowntimeEvent).filter(
             DowntimeEvent.start_notification_id == notification_id
         ).all()
-        
+
         referenced_as_end = db.query(DowntimeEvent).filter(
             DowntimeEvent.end_notification_id == notification_id
         ).all()
-        
-        if referenced_as_start or referenced_as_end:
-            # If the notification is referenced, we can't delete it directly
-            logger.warning(
-                f"Notification ID {notification_id} is referenced by {len(referenced_as_start)} downtime events as start notification "
-                f"and {len(referenced_as_end)} downtime events as end notification. Cannot delete."
+
+        end_notifications_to_delete: List[int] = []
+
+        if referenced_as_start:
+            logger.info(
+                f"Notification ID {notification_id} is referenced by {len(referenced_as_start)} downtime events as start notification. Deleting those events and their end notifications if present."
             )
-            transaction.rollback()
-            return False
+            for event in referenced_as_start:
+                if event.end_notification_id:
+                    end_notifications_to_delete.append(event.end_notification_id)
+                db.delete(event)
+            db.flush()
+
+        if referenced_as_end:
+            logger.info(
+                f"Notification ID {notification_id} is referenced by {len(referenced_as_end)} downtime events as end notification. Clearing those references."
+            )
+            for event in referenced_as_end:
+                event.end_notification_id = None
+                event.end_time = None
+            db.flush()
         
         # First load the notification with all related data
         notification = (
@@ -512,12 +532,17 @@ def delete_notification(db: Session, notification_id: int) -> bool:
             )
             .first()
         )
-        
+
         if not notification:
             logger.warning(
                 f"Notification with ID {notification_id} not found for deletion. Database state may be inconsistent."
             )
             return False
+
+        # Delete any end notifications collected from referenced start events
+        for end_id in end_notifications_to_delete:
+            if end_id != notification_id:
+                delete_notification(db, end_id, internal_call=True)
         
         # Log detailed info about what we found
         logger.info(
@@ -553,15 +578,18 @@ def delete_notification(db: Session, notification_id: int) -> bool:
                 db.delete(raw_email)
                 logger.info(f"Explicitly deleted RawEmail ID {raw_email_id}")
         
-        # Commit the transaction
-        transaction.commit()
-        db.commit()
+        if not internal_call:
+            # Commit the transaction
+            if transaction:
+                transaction.commit()
+            db.commit()
         logger.info(f"Successfully deleted notification ID {notification_id} and all related records.")
         return True
-        
+
     except Exception as e:
         # Roll back in case of any error
-        transaction.rollback()
+        if transaction:
+            transaction.rollback()
         db.rollback()
         logger.error(
             f"Error deleting notification ID {notification_id}: {str(e)}",

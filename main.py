@@ -312,35 +312,29 @@ def delete_notification_api(notification_id: int):
             404,
         )
     
-    # Check if this notification is used in any downtime events before attempting to delete
+    # Check whether this notification is the start of any downtime events.
     referenced_as_start = g.db.query(DowntimeEvent).filter(
         DowntimeEvent.start_notification_id == notification_id
     ).count()
-    
+
+    if referenced_as_start > 0:
+        logger.info(
+            f"Notification ID {notification_id} starts {referenced_as_start} downtime events. They will be deleted as well."
+        )
+
+    # Count how many events reference it as the end notification just for logging
     referenced_as_end = g.db.query(DowntimeEvent).filter(
         DowntimeEvent.end_notification_id == notification_id
     ).count()
-    
-    if referenced_as_start > 0 or referenced_as_end > 0:
-        msg = f"Notification ID {notification_id} cannot be deleted because it is referenced by "
-        if referenced_as_start > 0:
-            msg += f"{referenced_as_start} downtime events as the start notification"
-        if referenced_as_end > 0:
-            if referenced_as_start > 0:
-                msg += " and "
-            msg += f"{referenced_as_end} downtime events as the end notification"
-        logger.warning(msg)
-        return (
-            jsonify({
-                "error": f"Cannot delete notification {notification_id}",
-                "details": msg,
-                "referenced_by_start_events": referenced_as_start,
-                "referenced_by_end_events": referenced_as_end
-            }),
-            409,  # Conflict status code
+
+    if referenced_as_end > 0:
+        logger.info(
+            f"Notification ID {notification_id} is referenced by {referenced_as_end} "
+            "downtime events as end notification. Those events will be reopened."
         )
     
-    # If we get here, notification exists and is not referenced, try to delete it
+    # Attempt the deletion in CRUD. This will also delete any downtime events
+    # started by this notification and reopen those that end with it.
     success = crud.delete_notification(g.db, notification_id)
     if not success:
         # This is unexpected since we verified existence and no references
