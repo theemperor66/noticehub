@@ -61,14 +61,22 @@ logger.info("Initializing NoticeHub...")
 # --- Flask App Setup ---
 app = Flask(__name__)
 
-# --- Pre-filter Configuration (Placeholder - should be from config) ---
-SENDER_WHITELIST = ["cloudprovider.com", "status.example.com", "alerts@service.com"]
-SENDER_BLACKLIST = ["marketing@example.com", "spam@example.net"]
-SUBJECT_KEYWORDS = [
+# --- Pre-filter Configuration from environment settings ---
+# Use the domain whitelist from config, fall back to defaults if empty
+SENDER_WHITELIST = config.settings.email_sender_domain_whitelist or [
+    "cloudprovider.com", "status.example.com", "alerts@service.com"
+]
+
+SENDER_BLACKLIST = config.settings.email_sender_domain_blacklist or [
+    "marketing@example.com", "spam@example.net"
+]
+
+# Using subject keywords whitelist, which is what we care about for filtering
+SUBJECT_KEYWORDS = config.settings.email_subject_keywords_whitelist or [
     "Maintenance",
     "Outage",
-    "Störung",
-    "Wartung",
+    "Störung", # German for "disruption"
+    "Wartung",  # German for "maintenance"
     "Incident",
     "Alert",
     "Update",
@@ -80,7 +88,7 @@ SUBJECT_KEYWORDS = [
 INITIAL_EXTRACTION_PROMPT_TEMPLATE = """
 Extract the following information from the email content provided below.
 Return the information as a JSON object with these exact keys:
-'extracted_service_name', 'event_start_time', 'event_end_time', 'notification_type', 'event_summary', 'severity_level'.
+'extracted_service_name', 'event_start_time', 'event_end_time', 'notification_type', 'event_summary', 'severity_level', 'notification_status'.
 
 - 'extracted_service_name': The name of the service mentioned (e.g., "AWS EC2", "GitHub Actions").
 - 'extracted_service_name': Choose from the following known services when possible: {service_options}
@@ -88,7 +96,14 @@ Return the information as a JSON object with these exact keys:
 - 'event_end_time': The end date and time of the event (YYYY-MM-DD HH:MM UTC or ISO 8601). If not found, use null.
 - 'notification_type': One of ["maintenance", "outage", "update", "alert", "info", "security", "unknown"].
 - 'event_summary': A brief summary of the event or notification (1-2 sentences).
-- 'severity_level': One of ["low", "medium", "high", "critical", "info", "unknown"].
+- 'severity_level': One of ["low", "medium", "high", "critical", "info", "unknown"] based on the impact and urgency of the issue.
+- 'notification_status': One of ["new", "triaged", "action_pending", "in_progress", "resolved", "archived"] based on the current state of the issue:
+  - "new": First notification of an issue with no indication of being addressed
+  - "triaged": Issue has been identified but not yet acted upon
+  - "action_pending": Planned action is needed (maintenance, etc.)
+  - "in_progress": Work is actively being done to address the issue
+  - "resolved": Issue has been fixed or service restored
+  - "archived": Historical notification with no current relevance
 
 Always include every key. Use null when a value is missing. Provide only JSON with no extra text.
 
@@ -914,6 +929,7 @@ def api_process_html_email():
                     llm_summary=llm_response.get("event_summary"),
                     raw_llm_response=raw_llm_response,
                     processing_status=ProcessingStatusEnum.COMPLETED,
+                    notification_status=parse_llm_notification_status(llm_response.get("notification_status")),
                 )
                 crud.analyze_notification_impacts(
                     g.db, notification.id, llm_response.get("extracted_service_name")
@@ -980,29 +996,72 @@ def parse_llm_notification_type(type_str: Optional[str]) -> NotificationTypeEnum
 
 
 def parse_llm_severity(severity_str: Optional[str]) -> SeverityEnum:
-    if not severity_str or severity_str.strip() == "":
-        return SeverityEnum.UNKNOWN
-    processed_severity_str = severity_str.lower().strip()
-    try:
-        return SeverityEnum(processed_severity_str)
-    except ValueError:
-        maps = {
-            "critical": SeverityEnum.CRITICAL,
-            "high": SeverityEnum.HIGH,
-            "medium": SeverityEnum.MEDIUM,
-            "moderate": SeverityEnum.MEDIUM,
-            "low": SeverityEnum.LOW,
-            "informational": SeverityEnum.INFO,
-            "info": SeverityEnum.INFO,
-        }
-        for key, val in maps.items():
-            if key in processed_severity_str:
-                return val
-        logger.warning(
-            f"Unknown severity string '{severity_str}', defaulted to UNKNOWN."
-        )
+    """Convert LLM severity string to SeverityEnum value."""
+    if not severity_str or severity_str.lower() == "null":
         return SeverityEnum.UNKNOWN
 
+    try:
+        return SeverityEnum(severity_str.lower())
+    except ValueError:
+        pass
+
+    # Try to map common terms to valid enum values
+    severity_map = {
+        "critical": SeverityEnum.CRITICAL,
+        "high": SeverityEnum.HIGH,
+        "medium": SeverityEnum.MEDIUM,
+        "moderate": SeverityEnum.MEDIUM,
+        "low": SeverityEnum.LOW,
+        "informational": SeverityEnum.INFO,
+        "info": SeverityEnum.INFO,
+        # Add more mappings if needed
+    }
+
+    normalized = severity_str.lower()
+    for key, value in severity_map.items():
+        if key in normalized:
+            return value
+
+    # Default
+    logger.warning(f"Unknown severity string '{severity_str}', defaulted to UNKNOWN.")
+    return SeverityEnum.UNKNOWN
+
+def parse_llm_notification_status(status_str: Optional[str]) -> Optional[NotificationStatusEnum]:
+    """Convert LLM notification status string to NotificationStatusEnum value.
+    
+    Returns None if the status string is invalid or not provided, which means
+    the system will use its default status determination logic.
+    """
+    if not status_str or status_str.lower() == "null":
+        return None
+        
+    try:
+        return NotificationStatusEnum(status_str.lower())
+    except ValueError:
+        pass
+        
+    # Try to map common terms to valid enum values
+    status_map = {
+        "new": NotificationStatusEnum.NEW,
+        "triaged": NotificationStatusEnum.TRIAGED,
+        "action_pending": NotificationStatusEnum.ACTION_PENDING,
+        "action pending": NotificationStatusEnum.ACTION_PENDING,
+        "in_progress": NotificationStatusEnum.IN_PROGRESS,
+        "in progress": NotificationStatusEnum.IN_PROGRESS,
+        "resolved": NotificationStatusEnum.RESOLVED,
+        "fixed": NotificationStatusEnum.RESOLVED,
+        "completed": NotificationStatusEnum.RESOLVED,
+        "archived": NotificationStatusEnum.ARCHIVED,
+        # Add more mappings if needed
+    }
+    
+    normalized = status_str.lower()
+    for key, value in status_map.items():
+        if key in normalized:
+            return value
+            
+    # Return None to use default status determination logic
+    return None
 
 def validate_llm_extraction_response(data: Dict[str, Any]) -> bool:
     required_keys = {
@@ -1256,6 +1315,11 @@ def main_email_processing_workflow():
                     )
                     event_summary_str = llm_response_dict.get("event_summary")
 
+                    # Get notification status from LLM if available
+                    parsed_notification_status = parse_llm_notification_status(
+                        llm_response_dict.get("notification_status")
+                    )
+                    
                     crud.update_llm_data_extracted_fields(
                         db=db_session_local,
                         llm_data_id=notification_record.llm_data.id,
@@ -1266,7 +1330,8 @@ def main_email_processing_workflow():
                         severity=parsed_severity,
                         llm_summary=event_summary_str,
                         raw_llm_response=raw_llm_response_str,
-                        processing_status=ProcessingStatusEnum.COMPLETED,  # Or PENDING_VALIDATION if needed
+                        processing_status=ProcessingStatusEnum.COMPLETED,
+                        notification_status=parsed_notification_status,
                     )
 
                     impacts = crud.analyze_notification_impacts(

@@ -253,15 +253,46 @@ def check_and_fix_data_consistency(db: Session) -> dict:
 def _map_llm_status_to_notification_status(
     llm_processing_status: ProcessingStatusEnum,
 ) -> NotificationStatusEnum:
-    if llm_processing_status == ProcessingStatusEnum.COMPLETED:
-        return NotificationStatusEnum.TRIAGED
-    elif llm_processing_status == ProcessingStatusEnum.ERROR:
+    """Maps LLM processing status to notification status - used for error cases only."""
+    if llm_processing_status == ProcessingStatusEnum.ERROR:
         return NotificationStatusEnum.ERROR_PROCESSING
     elif llm_processing_status == ProcessingStatusEnum.MANUAL_REVIEW:
-        return NotificationStatusEnum.PENDING_MANUAL_REVIEW  # Assuming this exists
+        return NotificationStatusEnum.PENDING_MANUAL_REVIEW
     elif llm_processing_status == ProcessingStatusEnum.PENDING_VALIDATION:
-        return NotificationStatusEnum.PENDING_VALIDATION  # Assuming this exists
-    return NotificationStatusEnum.NEW  # Default or UNPROCESSED equivalent
+        return NotificationStatusEnum.PENDING_VALIDATION
+    return NotificationStatusEnum.NEW  # Default for processing error cases
+
+
+def _map_notification_type_to_status(
+    notification_type: Optional[NotificationTypeEnum],
+    llm_summary: Optional[str] = None
+) -> NotificationStatusEnum:
+    """Maps the actual notification type to an appropriate status.
+    
+    This determines status based on the notification content, not just LLM processing state.
+    """
+    if not notification_type:
+        return NotificationStatusEnum.NEW
+        
+    # Map notification types to appropriate statuses
+    if notification_type == NotificationTypeEnum.OUTAGE:
+        return NotificationStatusEnum.IN_PROGRESS
+    elif notification_type == NotificationTypeEnum.MAINTENANCE:
+        return NotificationStatusEnum.ACTION_PENDING
+    elif notification_type == NotificationTypeEnum.ALERT:
+        return NotificationStatusEnum.IN_PROGRESS
+    elif notification_type == NotificationTypeEnum.SECURITY:
+        return NotificationStatusEnum.ACTION_PENDING
+    
+    # For update/info notifications, check if they're about resolution
+    if notification_type in [NotificationTypeEnum.UPDATE, NotificationTypeEnum.INFO] and llm_summary:
+        # Check if summary indicates resolution
+        resolution_keywords = ["resolved", "fixed", "resolved", "restored", "completed", "normal"]
+        if any(keyword in llm_summary.lower() for keyword in resolution_keywords):
+            return NotificationStatusEnum.RESOLVED
+    
+    # Default for new notifications or those that don't match specific criteria
+    return NotificationStatusEnum.NEW
 
 
 def update_llm_data_extracted_fields(
@@ -275,6 +306,7 @@ def update_llm_data_extracted_fields(
     llm_summary: Optional[str],
     raw_llm_response: Optional[str],
     processing_status: ProcessingStatusEnum,
+    notification_status: Optional[NotificationStatusEnum] = None,
 ) -> Optional[LLMData]:
     """Updates LLMData with extracted fields and updates parent Notification status."""
     db_llm_data = get_item_by_id(db, LLMData, llm_data_id)
@@ -300,10 +332,22 @@ def update_llm_data_extracted_fields(
         .first()
     )
     if notification:
-        notification.status = _map_llm_status_to_notification_status(processing_status)
+        # If LLM provided a specific status, use it
+        if notification_status:
+            notification.status = notification_status
+            status_source = "LLM-determined status"
+        # Otherwise use notification type to determine appropriate status if processing was successful
+        elif processing_status == ProcessingStatusEnum.COMPLETED:
+            notification.status = _map_notification_type_to_status(notification_type, llm_summary)
+            status_source = "notification type mapping"
+        else:
+            # For error cases, use the processing status mapping
+            notification.status = _map_llm_status_to_notification_status(processing_status)
+            status_source = "processing status mapping"
+            
         notification.last_checked_at = datetime.now(timezone.utc)
         logger.info(
-            f"Parent Notification ID {notification.id} status updated to {notification.status.value}"
+            f"Parent Notification ID {notification.id} status updated to {notification.status.value} based on {status_source}"
         )
     else:
         logger.warning(
